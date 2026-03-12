@@ -1,0 +1,479 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Open Emails Dashboard</title>
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; background: #0f172a; color: #e2e8f0; min-height: 100vh; }
+    nav { background: #1e293b; border-bottom: 1px solid #334155; padding: 0 24px; display: flex; align-items: center; gap: 8px; height: 52px; }
+    nav h1 { font-size: 16px; font-weight: 700; color: #f1f5f9; margin-right: 16px; }
+    nav button { background: none; border: none; color: #94a3b8; cursor: pointer; padding: 6px 14px; border-radius: 6px; font-size: 13px; transition: all .15s; }
+    nav button:hover, nav button.active { background: #334155; color: #f1f5f9; }
+    .main { padding: 24px; max-width: 1200px; margin: 0 auto; }
+    .page { display: none; }
+    .page.active { display: block; }
+    h2 { font-size: 18px; font-weight: 600; margin-bottom: 20px; color: #f1f5f9; }
+    .cards { display: grid; grid-template-columns: repeat(auto-fit, minmax(160px, 1fr)); gap: 16px; margin-bottom: 28px; }
+    .card { background: #1e293b; border: 1px solid #334155; border-radius: 10px; padding: 18px; }
+    .card .label { font-size: 12px; color: #94a3b8; margin-bottom: 6px; text-transform: uppercase; letter-spacing: .5px; }
+    .card .value { font-size: 28px; font-weight: 700; color: #f1f5f9; }
+    .card .sub { font-size: 12px; color: #64748b; margin-top: 4px; }
+    table { width: 100%; border-collapse: collapse; font-size: 13px; }
+    th { text-align: left; padding: 10px 12px; color: #94a3b8; font-weight: 500; border-bottom: 1px solid #334155; font-size: 12px; text-transform: uppercase; letter-spacing: .4px; }
+    td { padding: 10px 12px; border-bottom: 1px solid #1e293b; }
+    tr:last-child td { border-bottom: none; }
+    tr:hover td { background: #1e293b; }
+    .badge { display: inline-block; padding: 2px 8px; border-radius: 4px; font-size: 11px; font-weight: 600; }
+    .badge.verified, .badge.delivered { background: #166534; color: #86efac; }
+    .badge.pending, .badge.sent { background: #713f12; color: #fde68a; }
+    .badge.failed, .badge.bounced, .badge.complained { background: #7f1d1d; color: #fca5a5; }
+    .badge.resend { background: #1e3a5f; color: #93c5fd; }
+    .badge.ses { background: #2d1b69; color: #c4b5fd; }
+    .btn { padding: 7px 14px; border-radius: 6px; font-size: 13px; font-weight: 500; cursor: pointer; border: 1px solid; transition: all .15s; }
+    .btn-primary { background: #3b82f6; border-color: #3b82f6; color: #fff; }
+    .btn-primary:hover { background: #2563eb; }
+    .btn-danger { background: transparent; border-color: #ef4444; color: #ef4444; }
+    .btn-danger:hover { background: #7f1d1d; }
+    .btn-sm { padding: 4px 10px; font-size: 12px; }
+    .toolbar { display: flex; gap: 12px; align-items: center; margin-bottom: 16px; }
+    .toolbar select, .toolbar input { background: #1e293b; border: 1px solid #334155; color: #e2e8f0; padding: 7px 12px; border-radius: 6px; font-size: 13px; }
+    .error { background: #7f1d1d; border: 1px solid #ef4444; color: #fca5a5; padding: 12px 16px; border-radius: 8px; margin-bottom: 16px; font-size: 13px; }
+    .empty { text-align: center; color: #64748b; padding: 48px; font-size: 14px; }
+    .panel { background: #1e293b; border: 1px solid #334155; border-radius: 10px; padding: 0; overflow: hidden; }
+    .pagination { display: flex; gap: 8px; align-items: center; margin-top: 14px; font-size: 13px; color: #94a3b8; }
+    .pagination button { background: #1e293b; border: 1px solid #334155; color: #e2e8f0; padding: 5px 12px; border-radius: 5px; cursor: pointer; font-size: 12px; }
+    .pagination button:disabled { opacity: .4; cursor: not-allowed; }
+    .modal-bg { display: none; position: fixed; inset: 0; background: rgba(0,0,0,.7); z-index: 100; align-items: center; justify-content: center; }
+    .modal-bg.open { display: flex; }
+    .modal { background: #1e293b; border: 1px solid #334155; border-radius: 12px; padding: 24px; width: 480px; max-width: 94vw; }
+    .modal h3 { font-size: 15px; font-weight: 600; margin-bottom: 16px; }
+    .modal label { display: block; font-size: 12px; color: #94a3b8; margin-bottom: 4px; margin-top: 12px; }
+    .modal input, .modal select, .modal textarea { width: 100%; background: #0f172a; border: 1px solid #334155; color: #e2e8f0; padding: 8px 12px; border-radius: 6px; font-size: 13px; }
+    .modal textarea { resize: vertical; min-height: 80px; }
+    .modal .actions { display: flex; gap: 10px; justify-content: flex-end; margin-top: 20px; }
+    .id { font-family: monospace; font-size: 11px; color: #64748b; }
+    .loading { color: #64748b; font-size: 13px; padding: 24px; text-align: center; }
+  </style>
+</head>
+<body>
+
+<nav>
+  <h1>✉ Emails</h1>
+  <button class="active" onclick="showPage('overview')">Overview</button>
+  <button onclick="showPage('providers')">Providers</button>
+  <button onclick="showPage('domains')">Domains</button>
+  <button onclick="showPage('addresses')">Addresses</button>
+  <button onclick="showPage('emails')">Emails</button>
+  <button onclick="showPage('events')">Events</button>
+</nav>
+
+<div class="main">
+
+  <!-- OVERVIEW -->
+  <div id="page-overview" class="page active">
+    <h2>Overview</h2>
+    <div class="cards" id="stats-cards"><div class="loading">Loading...</div></div>
+  </div>
+
+  <!-- PROVIDERS -->
+  <div id="page-providers" class="page">
+    <h2>Providers</h2>
+    <div class="toolbar">
+      <button class="btn btn-primary" onclick="openModal('modal-provider')">+ Add Provider</button>
+    </div>
+    <div id="error-providers"></div>
+    <div class="panel"><table id="table-providers"><tr><td class="loading">Loading...</td></tr></table></div>
+  </div>
+
+  <!-- DOMAINS -->
+  <div id="page-domains" class="page">
+    <h2>Domains</h2>
+    <div class="toolbar">
+      <button class="btn btn-primary" onclick="openModal('modal-domain')">+ Add Domain</button>
+    </div>
+    <div id="error-domains"></div>
+    <div class="panel"><table id="table-domains"><tr><td class="loading">Loading...</td></tr></table></div>
+  </div>
+
+  <!-- ADDRESSES -->
+  <div id="page-addresses" class="page">
+    <h2>Sender Addresses</h2>
+    <div class="toolbar">
+      <button class="btn btn-primary" onclick="openModal('modal-address')">+ Add Address</button>
+    </div>
+    <div id="error-addresses"></div>
+    <div class="panel"><table id="table-addresses"><tr><td class="loading">Loading...</td></tr></table></div>
+  </div>
+
+  <!-- EMAILS -->
+  <div id="page-emails" class="page">
+    <h2>Emails</h2>
+    <div class="toolbar">
+      <select id="filter-status" onchange="loadEmails()">
+        <option value="">All statuses</option>
+        <option value="sent">Sent</option>
+        <option value="delivered">Delivered</option>
+        <option value="bounced">Bounced</option>
+        <option value="complained">Complained</option>
+        <option value="failed">Failed</option>
+      </select>
+    </div>
+    <div id="error-emails"></div>
+    <div class="panel"><table id="table-emails"><tr><td class="loading">Loading...</td></tr></table></div>
+    <div class="pagination">
+      <button id="btn-prev" onclick="emailsPage('prev')" disabled>&larr; Prev</button>
+      <span id="emails-page-info">Page 1</span>
+      <button id="btn-next" onclick="emailsPage('next')">&rarr; Next</button>
+    </div>
+  </div>
+
+  <!-- EVENTS -->
+  <div id="page-events" class="page">
+    <h2>Recent Events</h2>
+    <div class="toolbar">
+      <select id="filter-event-type" onchange="loadEvents()">
+        <option value="">All types</option>
+        <option value="delivered">Delivered</option>
+        <option value="bounced">Bounced</option>
+        <option value="complained">Complained</option>
+        <option value="opened">Opened</option>
+        <option value="clicked">Clicked</option>
+        <option value="unsubscribed">Unsubscribed</option>
+      </select>
+    </div>
+    <div id="error-events"></div>
+    <div class="panel"><table id="table-events"><tr><td class="loading">Loading...</td></tr></table></div>
+  </div>
+
+</div>
+
+<!-- MODALS -->
+<div class="modal-bg" id="modal-provider">
+  <div class="modal">
+    <h3>Add Provider</h3>
+    <label>Name</label><input id="prov-name" placeholder="My Resend Account" />
+    <label>Type</label>
+    <select id="prov-type" onchange="toggleProviderFields()">
+      <option value="resend">Resend</option>
+      <option value="ses">AWS SES</option>
+    </select>
+    <div id="prov-resend-fields">
+      <label>API Key</label><input id="prov-api-key" type="password" placeholder="re_..." />
+    </div>
+    <div id="prov-ses-fields" style="display:none">
+      <label>Region</label><input id="prov-region" placeholder="us-east-1" />
+      <label>Access Key ID</label><input id="prov-access-key" placeholder="AKIA..." />
+      <label>Secret Access Key</label><input id="prov-secret-key" type="password" />
+    </div>
+    <div class="actions">
+      <button class="btn" onclick="closeModal('modal-provider')">Cancel</button>
+      <button class="btn btn-primary" onclick="addProvider()">Add Provider</button>
+    </div>
+  </div>
+</div>
+
+<div class="modal-bg" id="modal-domain">
+  <div class="modal">
+    <h3>Add Domain</h3>
+    <label>Provider</label><select id="dom-provider"></select>
+    <label>Domain</label><input id="dom-name" placeholder="example.com" />
+    <div class="actions">
+      <button class="btn" onclick="closeModal('modal-domain')">Cancel</button>
+      <button class="btn btn-primary" onclick="addDomain()">Add Domain</button>
+    </div>
+  </div>
+</div>
+
+<div class="modal-bg" id="modal-address">
+  <div class="modal">
+    <h3>Add Sender Address</h3>
+    <label>Provider</label><select id="addr-provider"></select>
+    <label>Email Address</label><input id="addr-email" placeholder="noreply@example.com" />
+    <label>Display Name (optional)</label><input id="addr-name" placeholder="My App" />
+    <div class="actions">
+      <button class="btn" onclick="closeModal('modal-address')">Cancel</button>
+      <button class="btn btn-primary" onclick="addAddress()">Add Address</button>
+    </div>
+  </div>
+</div>
+
+<script>
+const API = '';
+
+let emailsOffset = 0;
+const emailsLimit = 25;
+
+async function api(path, opts = {}) {
+  const res = await fetch(API + path, opts);
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({ error: res.statusText }));
+    throw new Error(err.error || res.statusText);
+  }
+  return res.json();
+}
+
+function showPage(name) {
+  document.querySelectorAll('.page').forEach(p => p.classList.remove('active'));
+  document.querySelectorAll('nav button').forEach(b => b.classList.remove('active'));
+  document.getElementById('page-' + name).classList.add('active');
+  event.target.classList.add('active');
+  if (name === 'overview') loadStats();
+  if (name === 'providers') loadProviders();
+  if (name === 'domains') loadDomains();
+  if (name === 'addresses') loadAddresses();
+  if (name === 'emails') { emailsOffset = 0; loadEmails(); }
+  if (name === 'events') loadEvents();
+}
+
+function openModal(id) {
+  document.getElementById(id).classList.add('open');
+  if (id === 'modal-domain' || id === 'modal-address') loadProviderSelects();
+}
+
+function closeModal(id) {
+  document.getElementById(id).classList.remove('open');
+}
+
+function toggleProviderFields() {
+  const type = document.getElementById('prov-type').value;
+  document.getElementById('prov-resend-fields').style.display = type === 'resend' ? '' : 'none';
+  document.getElementById('prov-ses-fields').style.display = type === 'ses' ? '' : 'none';
+}
+
+function badge(text, type) {
+  return `<span class="badge ${type}">${text}</span>`;
+}
+
+function fmt(ts) {
+  if (!ts) return '-';
+  return new Date(ts).toLocaleString();
+}
+
+// ─── STATS ───────────────────────────────────────────────────────────────────
+async function loadStats() {
+  try {
+    const stats = await api('/api/stats?period=30d');
+    document.getElementById('stats-cards').innerHTML = `
+      <div class="card"><div class="label">Sent</div><div class="value">${stats.sent}</div><div class="sub">Last 30 days</div></div>
+      <div class="card"><div class="label">Delivered</div><div class="value">${stats.delivered}</div><div class="sub">${stats.delivery_rate.toFixed(1)}% rate</div></div>
+      <div class="card"><div class="label">Bounced</div><div class="value">${stats.bounced}</div><div class="sub">${stats.bounce_rate.toFixed(1)}% rate</div></div>
+      <div class="card"><div class="label">Complained</div><div class="value">${stats.complained}</div><div class="sub">&nbsp;</div></div>
+      <div class="card"><div class="label">Opened</div><div class="value">${stats.opened}</div><div class="sub">${stats.open_rate.toFixed(1)}% rate</div></div>
+      <div class="card"><div class="label">Clicked</div><div class="value">${stats.clicked}</div><div class="sub">&nbsp;</div></div>
+    `;
+  } catch(e) {
+    document.getElementById('stats-cards').innerHTML = `<div class="error">${e.message}</div>`;
+  }
+}
+
+// ─── PROVIDERS ───────────────────────────────────────────────────────────────
+async function loadProviders() {
+  try {
+    const providers = await api('/api/providers');
+    const table = document.getElementById('table-providers');
+    if (!providers.length) { table.innerHTML = `<tr><td class="empty">No providers configured.</td></tr>`; return; }
+    table.innerHTML = `
+      <thead><tr><th>ID</th><th>Name</th><th>Type</th><th>Status</th><th>Created</th><th></th></tr></thead>
+      <tbody>${providers.map(p => `
+        <tr>
+          <td class="id">${p.id.slice(0,8)}</td>
+          <td>${p.name}</td>
+          <td>${badge(p.type, p.type)}</td>
+          <td>${badge(p.active ? 'active' : 'inactive', p.active ? 'verified' : 'pending')}</td>
+          <td>${fmt(p.created_at)}</td>
+          <td><button class="btn btn-danger btn-sm" onclick="removeProvider('${p.id}','${p.name}')">Remove</button></td>
+        </tr>`).join('')}</tbody>`;
+  } catch(e) {
+    document.getElementById('error-providers').innerHTML = `<div class="error">${e.message}</div>`;
+  }
+}
+
+async function addProvider() {
+  const type = document.getElementById('prov-type').value;
+  const body = {
+    name: document.getElementById('prov-name').value,
+    type,
+    api_key: type === 'resend' ? document.getElementById('prov-api-key').value : undefined,
+    region: type === 'ses' ? document.getElementById('prov-region').value : undefined,
+    access_key: type === 'ses' ? document.getElementById('prov-access-key').value : undefined,
+    secret_key: type === 'ses' ? document.getElementById('prov-secret-key').value : undefined,
+  };
+  try {
+    await api('/api/providers', { method: 'POST', headers: {'Content-Type':'application/json'}, body: JSON.stringify(body) });
+    closeModal('modal-provider');
+    loadProviders();
+  } catch(e) { alert(e.message); }
+}
+
+async function removeProvider(id, name) {
+  if (!confirm(`Remove provider "${name}"?`)) return;
+  try { await api('/api/providers/' + id, { method: 'DELETE' }); loadProviders(); }
+  catch(e) { alert(e.message); }
+}
+
+// ─── DOMAINS ─────────────────────────────────────────────────────────────────
+async function loadDomains() {
+  try {
+    const domains = await api('/api/domains');
+    const table = document.getElementById('table-domains');
+    if (!domains.length) { table.innerHTML = `<tr><td class="empty">No domains configured.</td></tr>`; return; }
+    table.innerHTML = `
+      <thead><tr><th>ID</th><th>Domain</th><th>DKIM</th><th>SPF</th><th>DMARC</th><th>Verified</th><th></th></tr></thead>
+      <tbody>${domains.map(d => `
+        <tr>
+          <td class="id">${d.id.slice(0,8)}</td>
+          <td>${d.domain}</td>
+          <td>${badge(d.dkim_status, d.dkim_status)}</td>
+          <td>${badge(d.spf_status, d.spf_status)}</td>
+          <td>${badge(d.dmarc_status, d.dmarc_status)}</td>
+          <td>${d.verified_at ? fmt(d.verified_at) : '-'}</td>
+          <td>
+            <button class="btn btn-sm" onclick="verifyDomain('${d.id}')" style="border-color:#334155;color:#94a3b8;margin-right:4px">Verify</button>
+            <button class="btn btn-danger btn-sm" onclick="removeDomain('${d.id}','${d.domain}')">Remove</button>
+          </td>
+        </tr>`).join('')}</tbody>`;
+  } catch(e) {
+    document.getElementById('error-domains').innerHTML = `<div class="error">${e.message}</div>`;
+  }
+}
+
+async function addDomain() {
+  const body = { provider_id: document.getElementById('dom-provider').value, domain: document.getElementById('dom-name').value };
+  try {
+    await api('/api/domains', { method: 'POST', headers: {'Content-Type':'application/json'}, body: JSON.stringify(body) });
+    closeModal('modal-domain');
+    loadDomains();
+  } catch(e) { alert(e.message); }
+}
+
+async function verifyDomain(id) {
+  try { await api('/api/domains/' + id + '/verify', { method: 'POST' }); loadDomains(); }
+  catch(e) { alert(e.message); }
+}
+
+async function removeDomain(id, name) {
+  if (!confirm(`Remove domain "${name}"?`)) return;
+  try { await api('/api/domains/' + id, { method: 'DELETE' }); loadDomains(); }
+  catch(e) { alert(e.message); }
+}
+
+// ─── ADDRESSES ───────────────────────────────────────────────────────────────
+async function loadAddresses() {
+  try {
+    const addresses = await api('/api/addresses');
+    const table = document.getElementById('table-addresses');
+    if (!addresses.length) { table.innerHTML = `<tr><td class="empty">No addresses configured.</td></tr>`; return; }
+    table.innerHTML = `
+      <thead><tr><th>ID</th><th>Email</th><th>Display Name</th><th>Verified</th><th>Created</th><th></th></tr></thead>
+      <tbody>${addresses.map(a => `
+        <tr>
+          <td class="id">${a.id.slice(0,8)}</td>
+          <td>${a.email}</td>
+          <td>${a.display_name || '-'}</td>
+          <td>${badge(a.verified ? 'verified' : 'unverified', a.verified ? 'verified' : 'pending')}</td>
+          <td>${fmt(a.created_at)}</td>
+          <td><button class="btn btn-danger btn-sm" onclick="removeAddress('${a.id}','${a.email}')">Remove</button></td>
+        </tr>`).join('')}</tbody>`;
+  } catch(e) {
+    document.getElementById('error-addresses').innerHTML = `<div class="error">${e.message}</div>`;
+  }
+}
+
+async function addAddress() {
+  const body = { provider_id: document.getElementById('addr-provider').value, email: document.getElementById('addr-email').value, display_name: document.getElementById('addr-name').value || undefined };
+  try {
+    await api('/api/addresses', { method: 'POST', headers: {'Content-Type':'application/json'}, body: JSON.stringify(body) });
+    closeModal('modal-address');
+    loadAddresses();
+  } catch(e) { alert(e.message); }
+}
+
+async function removeAddress(id, email) {
+  if (!confirm(`Remove address "${email}"?`)) return;
+  try { await api('/api/addresses/' + id, { method: 'DELETE' }); loadAddresses(); }
+  catch(e) { alert(e.message); }
+}
+
+// ─── EMAILS ──────────────────────────────────────────────────────────────────
+async function loadEmails() {
+  const status = document.getElementById('filter-status').value;
+  const params = new URLSearchParams({ limit: emailsLimit, offset: emailsOffset });
+  if (status) params.set('status', status);
+  try {
+    const emails = await api('/api/emails?' + params);
+    const table = document.getElementById('table-emails');
+    document.getElementById('emails-page-info').textContent = `Page ${Math.floor(emailsOffset / emailsLimit) + 1}`;
+    document.getElementById('btn-prev').disabled = emailsOffset === 0;
+    document.getElementById('btn-next').disabled = emails.length < emailsLimit;
+
+    if (!emails.length) { table.innerHTML = `<tr><td class="empty">No emails found.</td></tr>`; return; }
+    table.innerHTML = `
+      <thead><tr><th>ID</th><th>From</th><th>To</th><th>Subject</th><th>Status</th><th>Sent</th></tr></thead>
+      <tbody>${emails.map(e => `
+        <tr>
+          <td class="id">${e.id.slice(0,8)}</td>
+          <td>${e.from_address}</td>
+          <td>${(e.to_addresses || []).join(', ')}</td>
+          <td>${e.subject}</td>
+          <td>${badge(e.status, e.status)}</td>
+          <td>${fmt(e.sent_at)}</td>
+        </tr>`).join('')}</tbody>`;
+  } catch(e) {
+    document.getElementById('error-emails').innerHTML = `<div class="error">${e.message}</div>`;
+  }
+}
+
+function emailsPage(dir) {
+  if (dir === 'next') emailsOffset += emailsLimit;
+  else if (dir === 'prev' && emailsOffset > 0) emailsOffset -= emailsLimit;
+  loadEmails();
+}
+
+// ─── EVENTS ──────────────────────────────────────────────────────────────────
+async function loadEvents() {
+  const type = document.getElementById('filter-event-type').value;
+  const params = new URLSearchParams({ limit: 100 });
+  if (type) params.set('type', type);
+  try {
+    const events = await api('/api/events?' + params);
+    const table = document.getElementById('table-events');
+    if (!events.length) { table.innerHTML = `<tr><td class="empty">No events found.</td></tr>`; return; }
+    table.innerHTML = `
+      <thead><tr><th>ID</th><th>Type</th><th>Recipient</th><th>Email ID</th><th>Occurred</th></tr></thead>
+      <tbody>${events.map(e => `
+        <tr>
+          <td class="id">${e.id.slice(0,8)}</td>
+          <td>${badge(e.type, ['delivered','verified'].includes(e.type) ? 'verified' : ['bounced','complained'].includes(e.type) ? 'bounced' : 'pending')}</td>
+          <td>${e.recipient || '-'}</td>
+          <td class="id">${e.email_id ? e.email_id.slice(0,8) : '-'}</td>
+          <td>${fmt(e.occurred_at)}</td>
+        </tr>`).join('')}</tbody>`;
+  } catch(e) {
+    document.getElementById('error-events').innerHTML = `<div class="error">${e.message}</div>`;
+  }
+}
+
+// ─── PROVIDER SELECTS ────────────────────────────────────────────────────────
+async function loadProviderSelects() {
+  try {
+    const providers = await api('/api/providers');
+    const options = providers.map(p => `<option value="${p.id}">${p.name} [${p.type}]</option>`).join('');
+    ['dom-provider','addr-provider'].forEach(id => {
+      const el = document.getElementById(id);
+      if (el) el.innerHTML = options || '<option value="">No providers</option>';
+    });
+  } catch {}
+}
+
+// ─── Close modal on bg click ─────────────────────────────────────────────────
+document.querySelectorAll('.modal-bg').forEach(bg => {
+  bg.addEventListener('click', e => { if (e.target === bg) bg.classList.remove('open'); });
+});
+
+// Init
+loadStats();
+</script>
+</body>
+</html>
