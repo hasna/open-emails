@@ -494,6 +494,21 @@ server.tool(
       const provider = getProvider(providerId, db);
       if (!provider) throw new ProviderNotFoundError(providerId);
 
+      // Check domain warming limits
+      const fromDomain = input.from?.split("@")[1];
+      if (fromDomain) {
+        const warmingSchedule = getWarmingSchedule(fromDomain, db);
+        if (warmingSchedule) {
+          const limit = getTodayLimit(warmingSchedule);
+          if (limit !== null) {
+            const sent = getTodaySentCount(fromDomain, db);
+            if (sent >= limit) {
+              throw new Error(`Warming limit reached for ${fromDomain}: ${sent}/${limit} emails sent today. Increase limit or wait until tomorrow.`);
+            }
+          }
+        }
+      }
+
       const sendInput = { ...input, subject, html, text };
       const { messageId, providerId: actualProviderId } = await sendWithFailover(providerId, sendInput, db);
 
