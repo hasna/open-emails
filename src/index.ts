@@ -131,6 +131,7 @@ export {
 export {
   storeInboundEmail, getInboundEmail, listInboundEmails,
   deleteInboundEmail, clearInboundEmails,
+  listReplies, getReplyCount,
 } from "./db/inbound.js";
 
 export {

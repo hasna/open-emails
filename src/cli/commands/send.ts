@@ -15,6 +15,7 @@ import { sendWithFailover } from "../../lib/send.js";
 import { colorStatus } from "../../lib/format.js";
 import { log } from "../../lib/logger.js";
 import { handleError, resolveId } from "../utils.js";
+import { listReplies, getReplyCount } from "../../db/inbound.js";
 
 export function registerSendCommands(program: Command, output: (data: unknown, formatted: string) => void): void {
   program
@@ -343,6 +344,8 @@ export function registerSendCommands(program: Command, output: (data: unknown, f
         console.log(`  ${chalk.dim("Status:")}   ${colorStatus(emailRecord!.status)}`);
         console.log(`  ${chalk.dim("Sent:")}     ${emailRecord!.sent_at}`);
         if (emailRecord!.provider_message_id) console.log(`  ${chalk.dim("Msg ID:")}   ${emailRecord!.provider_message_id}`);
+        const replyCount = getReplyCount(resolvedId!, db);
+        if (replyCount > 0) console.log(`  ${chalk.dim("Replies:")}  ${chalk.cyan(String(replyCount))} (use 'emails replies ${id}' to view)`);
 
         if (content) {
           const headers = content.headers;
@@ -373,6 +376,27 @@ export function registerSendCommands(program: Command, output: (data: unknown, f
           console.log(chalk.dim("\n  No body content stored for this email."));
         }
         console.log();
+      } catch (e) { handleError(e); }
+    });
+
+  // ─── REPLIES ─────────────────────────────────────────────────────────────────
+  program.command("replies <id>").description("Show replies received for a sent email")
+    .action((id: string) => {
+      try {
+        const db = getDatabase();
+        const resolvedId = resolveId("emails", id);
+        const replies = listReplies(resolvedId, db);
+        if (!replies.length) {
+          console.log(chalk.dim("No replies received for this email."));
+          return;
+        }
+        console.log(chalk.bold(`\n${replies.length} repl${replies.length === 1 ? "y" : "ies"} for email ${id.slice(0, 8)}:\n`));
+        for (const r of replies) {
+          console.log(`  ${chalk.dim(r.received_at.slice(0, 16))}  ${chalk.cyan(r.from_address)}`);
+          console.log(`  ${chalk.dim("Subject:")} ${r.subject}`);
+          if (r.text_body) console.log(`  ${chalk.dim("Preview:")} ${r.text_body.slice(0, 100).replace(/\n/g, " ")}...`);
+          console.log();
+        }
       } catch (e) { handleError(e); }
     });
 

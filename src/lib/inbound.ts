@@ -355,6 +355,7 @@ function handleSmtpLine(
           {
             provider_id: providerId ?? null,
             message_id: parsed.message_id,
+            in_reply_to_email_id: null,  // auto-detected from headers in storeInboundEmail
             from_address: parsed.from_address || state.from,
             to_addresses: parsed.to_addresses.length > 0 ? parsed.to_addresses : state.to,
             cc_addresses: parsed.cc_addresses,

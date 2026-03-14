@@ -363,6 +363,13 @@ const MIGRATIONS = [
   CREATE INDEX IF NOT EXISTS idx_warming_status ON warming_schedules(status);
   INSERT OR IGNORE INTO _migrations (id) VALUES (13);
   `,
+
+  // Migration 14: Reply tracking — link inbound emails back to sent emails
+  `
+  ALTER TABLE inbound_emails ADD COLUMN in_reply_to_email_id TEXT REFERENCES emails(id) ON DELETE SET NULL;
+  CREATE INDEX IF NOT EXISTS idx_inbound_reply_to ON inbound_emails(in_reply_to_email_id);
+  INSERT OR IGNORE INTO _migrations (id) VALUES (14);
+  `,
 ];
 
 let _db: Database | null = null;
@@ -561,6 +568,8 @@ function ensureSchema(db: Database): void {
   ensureIndex("CREATE INDEX IF NOT EXISTS idx_inbound_from ON inbound_emails(from_address)");
   ensureIndex("CREATE INDEX IF NOT EXISTS idx_inbound_received ON inbound_emails(received_at)");
   ensureIndex("CREATE INDEX IF NOT EXISTS idx_inbound_provider ON inbound_emails(provider_id)");
+  ensureColumn("ALTER TABLE inbound_emails ADD COLUMN in_reply_to_email_id TEXT REFERENCES emails(id) ON DELETE SET NULL");
+  ensureIndex("CREATE INDEX IF NOT EXISTS idx_inbound_reply_to ON inbound_emails(in_reply_to_email_id)");
 
   // Ensure sequences tables exist
   ensureTable(`CREATE TABLE IF NOT EXISTS sequences (

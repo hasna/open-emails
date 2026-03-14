@@ -17,7 +17,7 @@ import {
 } from "../db/sequences.js";
 import { storeEmailContent, getEmailContent } from "../db/email-content.js";
 import { listSandboxEmails, getSandboxEmail, clearSandboxEmails } from "../db/sandbox.js";
-import { listInboundEmails, getInboundEmail, clearInboundEmails } from "../db/inbound.js";
+import { listInboundEmails, getInboundEmail, clearInboundEmails, listReplies, getReplyCount } from "../db/inbound.js";
 import { getDatabase, resolvePartialId } from "../db/database.js";
 import { getAdapter } from "../providers/index.js";
 import { getLocalStats } from "../lib/stats.js";
@@ -1300,6 +1300,25 @@ server.tool(
       }
       const enrollments = listEnrollments({ sequence_id: resolvedSequenceId, status });
       return { content: [{ type: "text", text: JSON.stringify(enrollments, null, 2) }] };
+    } catch (e) {
+      return { content: [{ type: "text", text: `Error: ${formatError(e)}` }], isError: true };
+    }
+  },
+);
+
+// ─── REPLY TRACKING ───────────────────────────────────────────────────────────
+
+server.tool(
+  "list_replies",
+  "List inbound emails received as replies to a sent email",
+  { email_id: z.string().describe("ID of the sent email to find replies for") },
+  async ({ email_id }) => {
+    try {
+      const db = getDatabase();
+      const resolvedId = resolvePartialId(db, "emails", email_id) ?? email_id;
+      const replies = listReplies(resolvedId, db);
+      const count = getReplyCount(resolvedId, db);
+      return { content: [{ type: "text", text: JSON.stringify({ count, replies }, null, 2) }] };
     } catch (e) {
       return { content: [{ type: "text", text: `Error: ${formatError(e)}` }], isError: true };
     }

@@ -743,6 +743,7 @@ export async function startServer(port = 3900, hostname = "127.0.0.1"): Promise<
           const stored = storeInboundEmail({
             provider_id: provider_id ?? null,
             message_id: parsed.message_id,
+            in_reply_to_email_id: null,  // auto-detected from headers
             from_address: parsed.from_address || "unknown",
             to_addresses: parsed.to_addresses,
             cc_addresses: parsed.cc_addresses,
