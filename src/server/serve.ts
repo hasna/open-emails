@@ -22,6 +22,9 @@ import { listGroups, createGroup, deleteGroup, getGroupByName, listMembers, addM
 import { listScheduledEmails, cancelScheduledEmail } from "../db/scheduled.js";
 import { getEmailContent } from "../db/email-content.js";
 import { getAnalytics } from "../lib/analytics.js";
+import { listInboundEmails, getInboundEmail, clearInboundEmails } from "../db/inbound.js";
+import { parseResendInbound, parseMailgunInbound, parseMimeEmail } from "../lib/inbound.js";
+import { storeInboundEmail } from "../db/inbound.js";
 import { runDiagnostics } from "../lib/doctor.js";
 import { exportEmailsCsv, exportEmailsJson, exportEventsCsv, exportEventsJson } from "../lib/export.js";
 
@@ -682,6 +685,80 @@ export async function startServer(port = 3900): Promise<void> {
           return new Response(exportEventsJson(filters), {
             headers: { "Content-Type": "application/json", "Access-Control-Allow-Origin": "*" },
           });
+        } catch (e) { return internalError(e); }
+      }
+
+      // ─── INBOUND EMAILS ────────────────────────────────────────────────────
+
+      // GET /api/inbound?provider_id=x&limit=50&since=...
+      if (path === "/api/inbound" && method === "GET") {
+        try {
+          const provider_id = url.searchParams.get("provider_id") ?? undefined;
+          const since = url.searchParams.get("since") ?? undefined;
+          const limit = url.searchParams.get("limit") ? parseInt(url.searchParams.get("limit")!, 10) : 50;
+          return json(listInboundEmails({ provider_id, since, limit }));
+        } catch (e) { return internalError(e); }
+      }
+
+      // DELETE /api/inbound?provider_id=x
+      if (path === "/api/inbound" && method === "DELETE") {
+        try {
+          const provider_id = url.searchParams.get("provider_id") ?? undefined;
+          const count = clearInboundEmails(provider_id);
+          return json({ ok: true, count });
+        } catch (e) { return internalError(e); }
+      }
+
+      // POST /api/inbound — webhook endpoint for Resend/Mailgun inbound routing
+      if (path === "/api/inbound" && method === "POST") {
+        try {
+          const body = await parseBody(req) as Record<string, unknown>;
+          let parsed: ReturnType<typeof parseMimeEmail>;
+
+          // Auto-detect format from payload shape
+          if (body["message-headers"] !== undefined || body["body-plain"] !== undefined || body.recipient !== undefined) {
+            // Mailgun format
+            parsed = parseMailgunInbound(body);
+          } else if (body.from !== undefined || body.to !== undefined || body.subject !== undefined) {
+            // Resend inbound format
+            parsed = parseResendInbound(body);
+          } else if (typeof body.raw === "string") {
+            // Raw MIME
+            parsed = parseMimeEmail(body.raw);
+          } else {
+            // Try Resend as default
+            parsed = parseResendInbound(body);
+          }
+
+          const provider_id = url.searchParams.get("provider_id") ?? undefined;
+          const rawBody = JSON.stringify(body);
+          const stored = storeInboundEmail({
+            provider_id: provider_id ?? null,
+            message_id: parsed.message_id,
+            from_address: parsed.from_address || "unknown",
+            to_addresses: parsed.to_addresses,
+            cc_addresses: parsed.cc_addresses,
+            subject: parsed.subject,
+            text_body: parsed.text_body,
+            html_body: parsed.html_body,
+            attachments: [],
+            headers: parsed.headers,
+            raw_size: rawBody.length,
+            received_at: new Date().toISOString(),
+          });
+          return json(stored, 201);
+        } catch (e) { return internalError(e); }
+      }
+
+      // GET /api/inbound/:id
+      const inboundMatch = path.match(/^\/api\/inbound\/([^/]+)$/);
+      if (inboundMatch && method === "GET") {
+        try {
+          const id = resolveId("inbound_emails", inboundMatch[1]!);
+          if (!id) return notFound("Inbound email not found");
+          const email = getInboundEmail(id);
+          if (!email) return notFound("Inbound email not found");
+          return json(email);
         } catch (e) { return internalError(e); }
       }
 

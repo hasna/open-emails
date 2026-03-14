@@ -278,6 +278,30 @@ const MIGRATIONS = [
   CREATE UNIQUE INDEX IF NOT EXISTS idx_emails_idempotency ON emails(idempotency_key) WHERE idempotency_key IS NOT NULL;
   INSERT OR IGNORE INTO _migrations (id) VALUES (10);
   `,
+
+  // Migration 11: Inbound emails table
+  `
+  CREATE TABLE IF NOT EXISTS inbound_emails (
+    id TEXT PRIMARY KEY,
+    provider_id TEXT REFERENCES providers(id) ON DELETE SET NULL,
+    message_id TEXT,
+    from_address TEXT NOT NULL,
+    to_addresses TEXT NOT NULL DEFAULT '[]',
+    cc_addresses TEXT NOT NULL DEFAULT '[]',
+    subject TEXT NOT NULL DEFAULT '',
+    text_body TEXT,
+    html_body TEXT,
+    attachments_json TEXT NOT NULL DEFAULT '[]',
+    headers_json TEXT NOT NULL DEFAULT '{}',
+    raw_size INTEGER DEFAULT 0,
+    received_at TEXT NOT NULL DEFAULT (datetime('now')),
+    created_at TEXT NOT NULL DEFAULT (datetime('now'))
+  );
+  CREATE INDEX IF NOT EXISTS idx_inbound_from ON inbound_emails(from_address);
+  CREATE INDEX IF NOT EXISTS idx_inbound_received ON inbound_emails(received_at);
+  CREATE INDEX IF NOT EXISTS idx_inbound_provider ON inbound_emails(provider_id);
+  INSERT OR IGNORE INTO _migrations (id) VALUES (11);
+  `,
 ];
 
 let _db: Database | null = null;
@@ -455,6 +479,27 @@ function ensureSchema(db: Database): void {
   )`);
   ensureIndex("CREATE INDEX IF NOT EXISTS idx_sandbox_provider ON sandbox_emails(provider_id)");
   ensureIndex("CREATE INDEX IF NOT EXISTS idx_sandbox_created ON sandbox_emails(created_at)");
+
+  // Ensure inbound_emails table exists
+  ensureTable(`CREATE TABLE IF NOT EXISTS inbound_emails (
+    id TEXT PRIMARY KEY,
+    provider_id TEXT REFERENCES providers(id) ON DELETE SET NULL,
+    message_id TEXT,
+    from_address TEXT NOT NULL,
+    to_addresses TEXT NOT NULL DEFAULT '[]',
+    cc_addresses TEXT NOT NULL DEFAULT '[]',
+    subject TEXT NOT NULL DEFAULT '',
+    text_body TEXT,
+    html_body TEXT,
+    attachments_json TEXT NOT NULL DEFAULT '[]',
+    headers_json TEXT NOT NULL DEFAULT '{}',
+    raw_size INTEGER DEFAULT 0,
+    received_at TEXT NOT NULL DEFAULT (datetime('now')),
+    created_at TEXT NOT NULL DEFAULT (datetime('now'))
+  )`);
+  ensureIndex("CREATE INDEX IF NOT EXISTS idx_inbound_from ON inbound_emails(from_address)");
+  ensureIndex("CREATE INDEX IF NOT EXISTS idx_inbound_received ON inbound_emails(received_at)");
+  ensureIndex("CREATE INDEX IF NOT EXISTS idx_inbound_provider ON inbound_emails(provider_id)");
 }
 
 export function closeDatabase(): void {

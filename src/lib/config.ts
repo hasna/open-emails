@@ -32,3 +32,9 @@ export function setConfigValue(key: string, value: unknown): void {
 export function getDefaultProviderId(): string | undefined {
   return loadConfig().default_provider as string | undefined;
 }
+
+export function getFailoverProviderIds(): string[] {
+  const val = loadConfig()["failover-providers"];
+  if (!val) return [];
+  return String(val).split(",").map(s => s.trim()).filter(Boolean);
+}

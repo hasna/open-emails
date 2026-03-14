@@ -12,6 +12,7 @@ import { createScheduledEmail, listScheduledEmails, cancelScheduledEmail } from 
 import { createGroup, getGroupByName, listGroups, deleteGroup, addMember, removeMember, listMembers, getMemberCount } from "../db/groups.js";
 import { storeEmailContent, getEmailContent } from "../db/email-content.js";
 import { listSandboxEmails, getSandboxEmail, clearSandboxEmails } from "../db/sandbox.js";
+import { listInboundEmails, getInboundEmail, clearInboundEmails } from "../db/inbound.js";
 import { getDatabase, resolvePartialId } from "../db/database.js";
 import { getAdapter } from "../providers/index.js";
 import { getLocalStats } from "../lib/stats.js";
@@ -1098,6 +1099,60 @@ server.tool(
       const { exportEventsCsv, exportEventsJson } = await import("../lib/export.js");
       const output = (format ?? "json") === "csv" ? exportEventsCsv(filters) : exportEventsJson(filters);
       return { content: [{ type: "text", text: output }] };
+    } catch (e) {
+      return { content: [{ type: "text", text: `Error: ${formatError(e)}` }], isError: true };
+    }
+  },
+);
+
+// ─── INBOUND EMAILS ───────────────────────────────────────────────────────────
+
+server.tool(
+  "list_inbound_emails",
+  "List received inbound emails",
+  {
+    provider_id: z.string().optional().describe("Filter by provider ID"),
+    since: z.string().optional().describe("ISO 8601 date — only return emails received after this time"),
+    limit: z.number().optional().describe("Max results (default 50)"),
+  },
+  async ({ provider_id, since, limit }) => {
+    try {
+      const emails = listInboundEmails({ provider_id, since, limit });
+      return { content: [{ type: "text", text: JSON.stringify(emails, null, 2) }] };
+    } catch (e) {
+      return { content: [{ type: "text", text: `Error: ${formatError(e)}` }], isError: true };
+    }
+  },
+);
+
+server.tool(
+  "get_inbound_email",
+  "Get a specific inbound email by ID",
+  {
+    id: z.string().describe("Inbound email ID (or prefix)"),
+  },
+  async ({ id }) => {
+    try {
+      const resolvedId = resolveId("inbound_emails", id);
+      const email = getInboundEmail(resolvedId);
+      if (!email) throw new Error(`Inbound email not found: ${id}`);
+      return { content: [{ type: "text", text: JSON.stringify(email, null, 2) }] };
+    } catch (e) {
+      return { content: [{ type: "text", text: `Error: ${formatError(e)}` }], isError: true };
+    }
+  },
+);
+
+server.tool(
+  "clear_inbound_emails",
+  "Delete all inbound emails, optionally filtered by provider",
+  {
+    provider_id: z.string().optional().describe("Only clear emails for this provider"),
+  },
+  async ({ provider_id }) => {
+    try {
+      const count = clearInboundEmails(provider_id);
+      return { content: [{ type: "text", text: `Cleared ${count} inbound email(s)` }] };
     } catch (e) {
       return { content: [{ type: "text", text: `Error: ${formatError(e)}` }], isError: true };
     }
