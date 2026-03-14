@@ -1,5 +1,5 @@
 // Provider types
-export type ProviderType = "resend" | "ses" | "gmail";
+export type ProviderType = "resend" | "ses" | "gmail" | "sandbox";
 
 export interface Provider {
   id: string;

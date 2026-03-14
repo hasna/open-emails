@@ -7,10 +7,13 @@
   <style>
     * { box-sizing: border-box; margin: 0; padding: 0; }
     body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; background: #0f172a; color: #e2e8f0; min-height: 100vh; }
-    nav { background: #1e293b; border-bottom: 1px solid #334155; padding: 0 24px; display: flex; align-items: center; gap: 8px; height: 52px; }
+    nav { background: #1e293b; border-bottom: 1px solid #334155; padding: 0 24px; display: flex; align-items: center; gap: 8px; height: 52px; flex-wrap: wrap; }
     nav h1 { font-size: 16px; font-weight: 700; color: #f1f5f9; margin-right: 16px; }
     nav button { background: none; border: none; color: #94a3b8; cursor: pointer; padding: 6px 14px; border-radius: 6px; font-size: 13px; transition: all .15s; }
     nav button:hover, nav button.active { background: #334155; color: #f1f5f9; }
+    .nav-right { margin-left: auto; display: flex; align-items: center; gap: 12px; }
+    .nav-right label { font-size: 12px; color: #94a3b8; display: flex; align-items: center; gap: 6px; cursor: pointer; white-space: nowrap; }
+    .nav-right input[type=checkbox] { accent-color: #3b82f6; cursor: pointer; }
     .main { padding: 24px; max-width: 1200px; margin: 0 auto; }
     .page { display: none; }
     .page.active { display: block; }
@@ -25,21 +28,30 @@
     td { padding: 10px 12px; border-bottom: 1px solid #1e293b; }
     tr:last-child td { border-bottom: none; }
     tr:hover td { background: #1e293b; }
+    tr.clickable { cursor: pointer; }
     .badge { display: inline-block; padding: 2px 8px; border-radius: 4px; font-size: 11px; font-weight: 600; }
     .badge.verified, .badge.delivered { background: #166534; color: #86efac; }
     .badge.pending, .badge.sent { background: #713f12; color: #fde68a; }
     .badge.failed, .badge.bounced, .badge.complained { background: #7f1d1d; color: #fca5a5; }
     .badge.resend { background: #1e3a5f; color: #93c5fd; }
     .badge.ses { background: #2d1b69; color: #c4b5fd; }
+    .badge.gmail { background: #1a3a1a; color: #86efac; }
+    .badge.sandbox { background: #3b2a00; color: #fde68a; }
+    .badge.suppressed { background: #7f1d1d; color: #fca5a5; }
     .btn { padding: 7px 14px; border-radius: 6px; font-size: 13px; font-weight: 500; cursor: pointer; border: 1px solid; transition: all .15s; }
     .btn-primary { background: #3b82f6; border-color: #3b82f6; color: #fff; }
     .btn-primary:hover { background: #2563eb; }
     .btn-danger { background: transparent; border-color: #ef4444; color: #ef4444; }
     .btn-danger:hover { background: #7f1d1d; }
+    .btn-secondary { background: transparent; border-color: #334155; color: #94a3b8; }
+    .btn-secondary:hover { background: #334155; color: #f1f5f9; }
     .btn-sm { padding: 4px 10px; font-size: 12px; }
-    .toolbar { display: flex; gap: 12px; align-items: center; margin-bottom: 16px; }
+    .toolbar { display: flex; gap: 12px; align-items: center; margin-bottom: 16px; flex-wrap: wrap; }
     .toolbar select, .toolbar input { background: #1e293b; border: 1px solid #334155; color: #e2e8f0; padding: 7px 12px; border-radius: 6px; font-size: 13px; }
-    .error { background: #7f1d1d; border: 1px solid #ef4444; color: #fca5a5; padding: 12px 16px; border-radius: 8px; margin-bottom: 16px; font-size: 13px; }
+    .toolbar input[type=text] { min-width: 220px; }
+    .error { background: #7f1d1d; border: 1px solid #ef4444; color: #fca5a5; padding: 12px 16px; border-radius: 8px; margin-bottom: 16px; font-size: 13px; display: flex; justify-content: space-between; align-items: center; }
+    .error .dismiss { cursor: pointer; font-size: 16px; line-height: 1; padding: 0 4px; opacity: .7; }
+    .error .dismiss:hover { opacity: 1; }
     .empty { text-align: center; color: #64748b; padding: 48px; font-size: 14px; }
     .panel { background: #1e293b; border: 1px solid #334155; border-radius: 10px; padding: 0; overflow: hidden; }
     .pagination { display: flex; gap: 8px; align-items: center; margin-top: 14px; font-size: 13px; color: #94a3b8; }
@@ -47,26 +59,40 @@
     .pagination button:disabled { opacity: .4; cursor: not-allowed; }
     .modal-bg { display: none; position: fixed; inset: 0; background: rgba(0,0,0,.7); z-index: 100; align-items: center; justify-content: center; }
     .modal-bg.open { display: flex; }
-    .modal { background: #1e293b; border: 1px solid #334155; border-radius: 12px; padding: 24px; width: 480px; max-width: 94vw; }
+    .modal { background: #1e293b; border: 1px solid #334155; border-radius: 12px; padding: 24px; width: 480px; max-width: 94vw; max-height: 90vh; overflow-y: auto; }
+    .modal.modal-wide { width: 700px; }
     .modal h3 { font-size: 15px; font-weight: 600; margin-bottom: 16px; }
     .modal label { display: block; font-size: 12px; color: #94a3b8; margin-bottom: 4px; margin-top: 12px; }
     .modal input, .modal select, .modal textarea { width: 100%; background: #0f172a; border: 1px solid #334155; color: #e2e8f0; padding: 8px 12px; border-radius: 6px; font-size: 13px; }
-    .modal textarea { resize: vertical; min-height: 80px; }
+    .modal textarea { resize: vertical; min-height: 80px; font-family: monospace; }
     .modal .actions { display: flex; gap: 10px; justify-content: flex-end; margin-top: 20px; }
     .id { font-family: monospace; font-size: 11px; color: #64748b; }
     .loading { color: #64748b; font-size: 13px; padding: 24px; text-align: center; }
+    .overview-toolbar { display: flex; gap: 12px; align-items: center; margin-bottom: 20px; }
+    .overview-toolbar select { background: #1e293b; border: 1px solid #334155; color: #e2e8f0; padding: 7px 12px; border-radius: 6px; font-size: 13px; }
+    .dns-table td, .dns-table th { word-break: break-all; }
+    .detail-grid { display: grid; grid-template-columns: 140px 1fr; gap: 8px 16px; font-size: 13px; margin-bottom: 16px; }
+    .detail-grid .dk { color: #94a3b8; font-size: 12px; text-transform: uppercase; letter-spacing: .4px; padding-top: 2px; }
+    .detail-grid .dv { color: #e2e8f0; }
+    .email-body-frame { width: 100%; border: 1px solid #334155; border-radius: 6px; background: #fff; min-height: 300px; margin-top: 8px; }
+    .email-body-pre { background: #0f172a; border: 1px solid #334155; border-radius: 6px; padding: 12px; font-family: monospace; font-size: 12px; color: #e2e8f0; max-height: 300px; overflow: auto; white-space: pre-wrap; word-break: break-all; margin-top: 8px; }
   </style>
 </head>
 <body>
 
 <nav>
   <h1>✉ Emails</h1>
-  <button class="active" onclick="showPage('overview')">Overview</button>
-  <button onclick="showPage('providers')">Providers</button>
-  <button onclick="showPage('domains')">Domains</button>
-  <button onclick="showPage('addresses')">Addresses</button>
-  <button onclick="showPage('emails')">Emails</button>
-  <button onclick="showPage('events')">Events</button>
+  <button class="active" onclick="showPage('overview',this)">Overview</button>
+  <button onclick="showPage('providers',this)">Providers</button>
+  <button onclick="showPage('domains',this)">Domains</button>
+  <button onclick="showPage('addresses',this)">Addresses</button>
+  <button onclick="showPage('emails',this)">Emails</button>
+  <button onclick="showPage('events',this)">Events</button>
+  <button onclick="showPage('contacts',this)">Contacts</button>
+  <button onclick="showPage('templates',this)">Templates</button>
+  <div class="nav-right">
+    <label><input type="checkbox" id="auto-refresh-cb" onchange="toggleAutoRefresh(this)"> Auto-refresh</label>
+  </div>
 </nav>
 
 <div class="main">
@@ -74,6 +100,15 @@
   <!-- OVERVIEW -->
   <div id="page-overview" class="page active">
     <h2>Overview</h2>
+    <div class="overview-toolbar">
+      <select id="stats-period" onchange="loadStats()">
+        <option value="7d">7 days</option>
+        <option value="30d" selected>30 days</option>
+        <option value="90d">90 days</option>
+      </select>
+      <button class="btn btn-primary btn-sm" onclick="triggerSync()">&#8635; Sync</button>
+    </div>
+    <div id="error-overview"></div>
     <div class="cards" id="stats-cards"><div class="loading">Loading...</div></div>
   </div>
 
@@ -111,7 +146,7 @@
   <div id="page-emails" class="page">
     <h2>Emails</h2>
     <div class="toolbar">
-      <select id="filter-status" onchange="loadEmails()">
+      <select id="filter-status" onchange="emailsOffset=0;loadEmails()">
         <option value="">All statuses</option>
         <option value="sent">Sent</option>
         <option value="delivered">Delivered</option>
@@ -119,6 +154,8 @@
         <option value="complained">Complained</option>
         <option value="failed">Failed</option>
       </select>
+      <input type="text" id="search-emails" placeholder="Search emails..." oninput="emailsSearchTimeout()" />
+      <button class="btn btn-primary btn-sm" onclick="triggerSync()">&#8635; Sync</button>
     </div>
     <div id="error-emails"></div>
     <div class="panel"><table id="table-emails"><tr><td class="loading">Loading...</td></tr></table></div>
@@ -147,9 +184,28 @@
     <div class="panel"><table id="table-events"><tr><td class="loading">Loading...</td></tr></table></div>
   </div>
 
+  <!-- CONTACTS -->
+  <div id="page-contacts" class="page">
+    <h2>Contacts</h2>
+    <div id="error-contacts"></div>
+    <div class="panel"><table id="table-contacts"><tr><td class="loading">Loading...</td></tr></table></div>
+  </div>
+
+  <!-- TEMPLATES -->
+  <div id="page-templates" class="page">
+    <h2>Templates</h2>
+    <div class="toolbar">
+      <button class="btn btn-primary" onclick="openModal('modal-template')">+ Add Template</button>
+    </div>
+    <div id="error-templates"></div>
+    <div class="panel"><table id="table-templates"><tr><td class="loading">Loading...</td></tr></table></div>
+  </div>
+
 </div>
 
 <!-- MODALS -->
+
+<!-- Provider Modal -->
 <div class="modal-bg" id="modal-provider">
   <div class="modal">
     <h3>Add Provider</h3>
@@ -158,6 +214,8 @@
     <select id="prov-type" onchange="toggleProviderFields()">
       <option value="resend">Resend</option>
       <option value="ses">AWS SES</option>
+      <option value="gmail">Gmail</option>
+      <option value="sandbox">Sandbox</option>
     </select>
     <div id="prov-resend-fields">
       <label>API Key</label><input id="prov-api-key" type="password" placeholder="re_..." />
@@ -167,25 +225,34 @@
       <label>Access Key ID</label><input id="prov-access-key" placeholder="AKIA..." />
       <label>Secret Access Key</label><input id="prov-secret-key" type="password" />
     </div>
+    <div id="prov-gmail-fields" style="display:none">
+      <label>Client ID</label><input id="prov-client-id" placeholder="xxxx.apps.googleusercontent.com" />
+      <label>Client Secret</label><input id="prov-client-secret" type="password" placeholder="GOCSPX-..." />
+    </div>
+    <div id="prov-sandbox-fields" style="display:none">
+      <p style="margin-top:12px;font-size:12px;color:#64748b;">Sandbox provider requires no credentials. Emails are captured locally and not delivered.</p>
+    </div>
     <div class="actions">
-      <button class="btn" onclick="closeModal('modal-provider')">Cancel</button>
+      <button class="btn btn-secondary" onclick="closeModal('modal-provider')">Cancel</button>
       <button class="btn btn-primary" onclick="addProvider()">Add Provider</button>
     </div>
   </div>
 </div>
 
+<!-- Domain Modal -->
 <div class="modal-bg" id="modal-domain">
   <div class="modal">
     <h3>Add Domain</h3>
     <label>Provider</label><select id="dom-provider"></select>
     <label>Domain</label><input id="dom-name" placeholder="example.com" />
     <div class="actions">
-      <button class="btn" onclick="closeModal('modal-domain')">Cancel</button>
+      <button class="btn btn-secondary" onclick="closeModal('modal-domain')">Cancel</button>
       <button class="btn btn-primary" onclick="addDomain()">Add Domain</button>
     </div>
   </div>
 </div>
 
+<!-- Address Modal -->
 <div class="modal-bg" id="modal-address">
   <div class="modal">
     <h3>Add Sender Address</h3>
@@ -193,8 +260,45 @@
     <label>Email Address</label><input id="addr-email" placeholder="noreply@example.com" />
     <label>Display Name (optional)</label><input id="addr-name" placeholder="My App" />
     <div class="actions">
-      <button class="btn" onclick="closeModal('modal-address')">Cancel</button>
+      <button class="btn btn-secondary" onclick="closeModal('modal-address')">Cancel</button>
       <button class="btn btn-primary" onclick="addAddress()">Add Address</button>
+    </div>
+  </div>
+</div>
+
+<!-- DNS Records Modal -->
+<div class="modal-bg" id="modal-dns">
+  <div class="modal modal-wide">
+    <h3>DNS Records</h3>
+    <div id="dns-records-content"><div class="loading">Loading...</div></div>
+    <div class="actions">
+      <button class="btn btn-secondary" onclick="closeModal('modal-dns')">Close</button>
+    </div>
+  </div>
+</div>
+
+<!-- Email Detail Modal -->
+<div class="modal-bg" id="modal-email-detail">
+  <div class="modal modal-wide">
+    <h3>Email Details</h3>
+    <div id="email-detail-content"><div class="loading">Loading...</div></div>
+    <div class="actions">
+      <button class="btn btn-secondary" onclick="closeModal('modal-email-detail')">Close</button>
+    </div>
+  </div>
+</div>
+
+<!-- Template Modal -->
+<div class="modal-bg" id="modal-template">
+  <div class="modal modal-wide">
+    <h3>Add Template</h3>
+    <label>Name</label><input id="tmpl-name" placeholder="Welcome Email" />
+    <label>Subject</label><input id="tmpl-subject" placeholder="Welcome to our platform!" />
+    <label>HTML Body</label><textarea id="tmpl-html" style="min-height:120px" placeholder="<h1>Hello {{name}}</h1>"></textarea>
+    <label>Text Body</label><textarea id="tmpl-text" style="min-height:80px" placeholder="Hello {{name}}"></textarea>
+    <div class="actions">
+      <button class="btn btn-secondary" onclick="closeModal('modal-template')">Cancel</button>
+      <button class="btn btn-primary" onclick="addTemplate()">Add Template</button>
     </div>
   </div>
 </div>
@@ -204,6 +308,9 @@ const API = '';
 
 let emailsOffset = 0;
 const emailsLimit = 25;
+let emailsSearchTimer = null;
+let autoRefreshInterval = null;
+let currentPage = 'overview';
 
 async function api(path, opts = {}) {
   const res = await fetch(API + path, opts);
@@ -214,17 +321,40 @@ async function api(path, opts = {}) {
   return res.json();
 }
 
-function showPage(name) {
+function showPage(name, btn) {
   document.querySelectorAll('.page').forEach(p => p.classList.remove('active'));
   document.querySelectorAll('nav button').forEach(b => b.classList.remove('active'));
   document.getElementById('page-' + name).classList.add('active');
-  event.target.classList.add('active');
+  if (btn) btn.classList.add('active');
+  currentPage = name;
   if (name === 'overview') loadStats();
   if (name === 'providers') loadProviders();
   if (name === 'domains') loadDomains();
   if (name === 'addresses') loadAddresses();
   if (name === 'emails') { emailsOffset = 0; loadEmails(); }
   if (name === 'events') loadEvents();
+  if (name === 'contacts') loadContacts();
+  if (name === 'templates') loadTemplates();
+}
+
+function refreshCurrent() {
+  if (currentPage === 'overview') loadStats();
+  else if (currentPage === 'providers') loadProviders();
+  else if (currentPage === 'domains') loadDomains();
+  else if (currentPage === 'addresses') loadAddresses();
+  else if (currentPage === 'emails') loadEmails();
+  else if (currentPage === 'events') loadEvents();
+  else if (currentPage === 'contacts') loadContacts();
+  else if (currentPage === 'templates') loadTemplates();
+}
+
+function toggleAutoRefresh(cb) {
+  if (cb.checked) {
+    autoRefreshInterval = setInterval(refreshCurrent, 30000);
+  } else {
+    clearInterval(autoRefreshInterval);
+    autoRefreshInterval = null;
+  }
 }
 
 function openModal(id) {
@@ -236,10 +366,23 @@ function closeModal(id) {
   document.getElementById(id).classList.remove('open');
 }
 
+function showError(containerId, message) {
+  const container = document.getElementById(containerId);
+  if (!container) return;
+  const div = document.createElement('div');
+  div.className = 'error';
+  div.innerHTML = `<span>${message}</span><span class="dismiss" onclick="this.parentElement.remove()">&#x2715;</span>`;
+  container.innerHTML = '';
+  container.appendChild(div);
+  setTimeout(() => { if (div.parentElement) div.remove(); }, 5000);
+}
+
 function toggleProviderFields() {
   const type = document.getElementById('prov-type').value;
   document.getElementById('prov-resend-fields').style.display = type === 'resend' ? '' : 'none';
   document.getElementById('prov-ses-fields').style.display = type === 'ses' ? '' : 'none';
+  document.getElementById('prov-gmail-fields').style.display = type === 'gmail' ? '' : 'none';
+  document.getElementById('prov-sandbox-fields').style.display = type === 'sandbox' ? '' : 'none';
 }
 
 function badge(text, type) {
@@ -251,12 +394,28 @@ function fmt(ts) {
   return new Date(ts).toLocaleString();
 }
 
+// ─── SYNC ─────────────────────────────────────────────────────────────────────
+async function triggerSync() {
+  const btns = document.querySelectorAll('[onclick="triggerSync()"]');
+  btns.forEach(b => { b.textContent = 'Syncing...'; b.disabled = true; });
+  try {
+    await api('/api/pull', { method: 'POST' });
+    refreshCurrent();
+  } catch(e) {
+    showError('error-' + currentPage, 'Sync failed: ' + e.message);
+  } finally {
+    btns.forEach(b => { b.innerHTML = '&#8635; Sync'; b.disabled = false; });
+  }
+}
+
 // ─── STATS ───────────────────────────────────────────────────────────────────
 async function loadStats() {
+  const period = document.getElementById('stats-period').value;
   try {
-    const stats = await api('/api/stats?period=30d');
+    const stats = await api('/api/stats?period=' + period);
+    const label = period === '7d' ? 'Last 7 days' : period === '30d' ? 'Last 30 days' : 'Last 90 days';
     document.getElementById('stats-cards').innerHTML = `
-      <div class="card"><div class="label">Sent</div><div class="value">${stats.sent}</div><div class="sub">Last 30 days</div></div>
+      <div class="card"><div class="label">Sent</div><div class="value">${stats.sent}</div><div class="sub">${label}</div></div>
       <div class="card"><div class="label">Delivered</div><div class="value">${stats.delivered}</div><div class="sub">${stats.delivery_rate.toFixed(1)}% rate</div></div>
       <div class="card"><div class="label">Bounced</div><div class="value">${stats.bounced}</div><div class="sub">${stats.bounce_rate.toFixed(1)}% rate</div></div>
       <div class="card"><div class="label">Complained</div><div class="value">${stats.complained}</div><div class="sub">&nbsp;</div></div>
@@ -264,7 +423,8 @@ async function loadStats() {
       <div class="card"><div class="label">Clicked</div><div class="value">${stats.clicked}</div><div class="sub">&nbsp;</div></div>
     `;
   } catch(e) {
-    document.getElementById('stats-cards').innerHTML = `<div class="error">${e.message}</div>`;
+    document.getElementById('stats-cards').innerHTML = '';
+    showError('error-overview', e.message);
   }
 }
 
@@ -286,7 +446,7 @@ async function loadProviders() {
           <td><button class="btn btn-danger btn-sm" onclick="removeProvider('${p.id}','${p.name}')">Remove</button></td>
         </tr>`).join('')}</tbody>`;
   } catch(e) {
-    document.getElementById('error-providers').innerHTML = `<div class="error">${e.message}</div>`;
+    showError('error-providers', e.message);
   }
 }
 
@@ -299,6 +459,8 @@ async function addProvider() {
     region: type === 'ses' ? document.getElementById('prov-region').value : undefined,
     access_key: type === 'ses' ? document.getElementById('prov-access-key').value : undefined,
     secret_key: type === 'ses' ? document.getElementById('prov-secret-key').value : undefined,
+    client_id: type === 'gmail' ? document.getElementById('prov-client-id').value : undefined,
+    client_secret: type === 'gmail' ? document.getElementById('prov-client-secret').value : undefined,
   };
   try {
     await api('/api/providers', { method: 'POST', headers: {'Content-Type':'application/json'}, body: JSON.stringify(body) });
@@ -329,13 +491,40 @@ async function loadDomains() {
           <td>${badge(d.spf_status, d.spf_status)}</td>
           <td>${badge(d.dmarc_status, d.dmarc_status)}</td>
           <td>${d.verified_at ? fmt(d.verified_at) : '-'}</td>
-          <td>
+          <td style="white-space:nowrap">
+            <button class="btn btn-secondary btn-sm" onclick="showDnsRecords('${d.id}')" style="margin-right:4px">DNS</button>
             <button class="btn btn-sm" onclick="verifyDomain('${d.id}')" style="border-color:#334155;color:#94a3b8;margin-right:4px">Verify</button>
             <button class="btn btn-danger btn-sm" onclick="removeDomain('${d.id}','${d.domain}')">Remove</button>
           </td>
         </tr>`).join('')}</tbody>`;
   } catch(e) {
-    document.getElementById('error-domains').innerHTML = `<div class="error">${e.message}</div>`;
+    showError('error-domains', e.message);
+  }
+}
+
+async function showDnsRecords(domainId) {
+  openModal('modal-dns');
+  document.getElementById('dns-records-content').innerHTML = '<div class="loading">Loading...</div>';
+  try {
+    const records = await api('/api/domains/' + domainId + '/dns');
+    if (!records || !records.length) {
+      document.getElementById('dns-records-content').innerHTML = '<p style="color:#64748b;font-size:13px;">No DNS records found.</p>';
+      return;
+    }
+    document.getElementById('dns-records-content').innerHTML = `
+      <table class="dns-table" style="font-size:12px">
+        <thead><tr><th>Type</th><th>Name</th><th>Value</th><th>Purpose</th></tr></thead>
+        <tbody>${records.map(r => `
+          <tr>
+            <td><span class="badge pending">${r.type || '-'}</span></td>
+            <td style="font-family:monospace;font-size:11px;word-break:break-all">${r.name || '-'}</td>
+            <td style="font-family:monospace;font-size:11px;word-break:break-all">${r.value || '-'}</td>
+            <td style="color:#94a3b8">${r.purpose || '-'}</td>
+          </tr>`).join('')}
+        </tbody>
+      </table>`;
+  } catch(e) {
+    document.getElementById('dns-records-content').innerHTML = `<div class="error"><span>${e.message}</span></div>`;
   }
 }
 
@@ -377,7 +566,7 @@ async function loadAddresses() {
           <td><button class="btn btn-danger btn-sm" onclick="removeAddress('${a.id}','${a.email}')">Remove</button></td>
         </tr>`).join('')}</tbody>`;
   } catch(e) {
-    document.getElementById('error-addresses').innerHTML = `<div class="error">${e.message}</div>`;
+    showError('error-addresses', e.message);
   }
 }
 
@@ -397,22 +586,44 @@ async function removeAddress(id, email) {
 }
 
 // ─── EMAILS ──────────────────────────────────────────────────────────────────
+function emailsSearchTimeout() {
+  clearTimeout(emailsSearchTimer);
+  emailsSearchTimer = setTimeout(() => {
+    emailsOffset = 0;
+    loadEmails();
+  }, 300);
+}
+
 async function loadEmails() {
   const status = document.getElementById('filter-status').value;
-  const params = new URLSearchParams({ limit: emailsLimit, offset: emailsOffset });
-  if (status) params.set('status', status);
+  const query = (document.getElementById('search-emails').value || '').trim();
+  let url;
+  if (query) {
+    const params = new URLSearchParams({ q: query });
+    if (status) params.set('status', status);
+    url = '/api/emails/search?' + params;
+  } else {
+    const params = new URLSearchParams({ limit: emailsLimit, offset: emailsOffset });
+    if (status) params.set('status', status);
+    url = '/api/emails?' + params;
+  }
   try {
-    const emails = await api('/api/emails?' + params);
+    const emails = await api(url);
     const table = document.getElementById('table-emails');
-    document.getElementById('emails-page-info').textContent = `Page ${Math.floor(emailsOffset / emailsLimit) + 1}`;
-    document.getElementById('btn-prev').disabled = emailsOffset === 0;
-    document.getElementById('btn-next').disabled = emails.length < emailsLimit;
-
+    if (!query) {
+      document.getElementById('emails-page-info').textContent = `Page ${Math.floor(emailsOffset / emailsLimit) + 1}`;
+      document.getElementById('btn-prev').disabled = emailsOffset === 0;
+      document.getElementById('btn-next').disabled = emails.length < emailsLimit;
+    } else {
+      document.getElementById('emails-page-info').textContent = `${emails.length} result(s)`;
+      document.getElementById('btn-prev').disabled = true;
+      document.getElementById('btn-next').disabled = true;
+    }
     if (!emails.length) { table.innerHTML = `<tr><td class="empty">No emails found.</td></tr>`; return; }
     table.innerHTML = `
       <thead><tr><th>ID</th><th>From</th><th>To</th><th>Subject</th><th>Status</th><th>Sent</th></tr></thead>
       <tbody>${emails.map(e => `
-        <tr>
+        <tr class="clickable" onclick="openEmailDetail('${e.id}')">
           <td class="id">${e.id.slice(0,8)}</td>
           <td>${e.from_address}</td>
           <td>${(e.to_addresses || []).join(', ')}</td>
@@ -421,7 +632,7 @@ async function loadEmails() {
           <td>${fmt(e.sent_at)}</td>
         </tr>`).join('')}</tbody>`;
   } catch(e) {
-    document.getElementById('error-emails').innerHTML = `<div class="error">${e.message}</div>`;
+    showError('error-emails', e.message);
   }
 }
 
@@ -429,6 +640,37 @@ function emailsPage(dir) {
   if (dir === 'next') emailsOffset += emailsLimit;
   else if (dir === 'prev' && emailsOffset > 0) emailsOffset -= emailsLimit;
   loadEmails();
+}
+
+async function openEmailDetail(id) {
+  openModal('modal-email-detail');
+  document.getElementById('email-detail-content').innerHTML = '<div class="loading">Loading...</div>';
+  try {
+    const email = await api('/api/emails/' + id);
+    let bodyHtml = '';
+    try {
+      const content = await api('/api/email-content/' + id);
+      if (content && content.html) {
+        bodyHtml = `<div style="margin-top:8px"><div style="font-size:12px;color:#94a3b8;margin-bottom:4px;text-transform:uppercase;letter-spacing:.4px">Body (HTML)</div><iframe class="email-body-frame" srcdoc="${content.html.replace(/"/g,'&quot;')}"></iframe></div>`;
+      } else if (content && content.text) {
+        bodyHtml = `<div style="margin-top:8px"><div style="font-size:12px;color:#94a3b8;margin-bottom:4px;text-transform:uppercase;letter-spacing:.4px">Body (Text)</div><pre class="email-body-pre">${content.text}</pre></div>`;
+      }
+    } catch(_) {}
+    document.getElementById('email-detail-content').innerHTML = `
+      <div class="detail-grid">
+        <div class="dk">ID</div><div class="dv id">${email.id}</div>
+        <div class="dk">From</div><div class="dv">${email.from_address || '-'}</div>
+        <div class="dk">To</div><div class="dv">${(email.to_addresses || []).join(', ') || '-'}</div>
+        <div class="dk">CC</div><div class="dv">${(email.cc_addresses || []).join(', ') || '-'}</div>
+        <div class="dk">Subject</div><div class="dv">${email.subject || '-'}</div>
+        <div class="dk">Status</div><div class="dv">${badge(email.status, email.status)}</div>
+        <div class="dk">Sent At</div><div class="dv">${fmt(email.sent_at)}</div>
+        <div class="dk">Provider</div><div class="dv">${email.provider_id ? email.provider_id.slice(0,8) : '-'}</div>
+      </div>
+      ${bodyHtml}`;
+  } catch(e) {
+    document.getElementById('email-detail-content').innerHTML = `<div class="error"><span>${e.message}</span></div>`;
+  }
 }
 
 // ─── EVENTS ──────────────────────────────────────────────────────────────────
@@ -451,8 +693,79 @@ async function loadEvents() {
           <td>${fmt(e.occurred_at)}</td>
         </tr>`).join('')}</tbody>`;
   } catch(e) {
-    document.getElementById('error-events').innerHTML = `<div class="error">${e.message}</div>`;
+    showError('error-events', e.message);
   }
+}
+
+// ─── CONTACTS ────────────────────────────────────────────────────────────────
+async function loadContacts() {
+  try {
+    const contacts = await api('/api/contacts');
+    const table = document.getElementById('table-contacts');
+    if (!contacts.length) { table.innerHTML = `<tr><td class="empty">No contacts found.</td></tr>`; return; }
+    table.innerHTML = `
+      <thead><tr><th>Email</th><th>Name</th><th>Send Count</th><th>Bounce Count</th><th>Status</th><th></th></tr></thead>
+      <tbody>${contacts.map(c => `
+        <tr>
+          <td>${c.email}</td>
+          <td>${c.name || '-'}</td>
+          <td>${c.send_count || 0}</td>
+          <td>${c.bounce_count || 0}</td>
+          <td>${c.suppressed ? badge('suppressed','suppressed') : badge('active','verified')}</td>
+          <td>${c.suppressed ? '' : `<button class="btn btn-danger btn-sm" onclick="suppressContact('${c.email}')">Suppress</button>`}</td>
+        </tr>`).join('')}</tbody>`;
+  } catch(e) {
+    showError('error-contacts', e.message);
+  }
+}
+
+async function suppressContact(email) {
+  if (!confirm(`Suppress contact "${email}"? They will no longer receive emails.`)) return;
+  try {
+    await api('/api/contacts/' + encodeURIComponent(email) + '/suppress', { method: 'POST' });
+    loadContacts();
+  } catch(e) { alert(e.message); }
+}
+
+// ─── TEMPLATES ───────────────────────────────────────────────────────────────
+async function loadTemplates() {
+  try {
+    const templates = await api('/api/templates');
+    const table = document.getElementById('table-templates');
+    if (!templates.length) { table.innerHTML = `<tr><td class="empty">No templates found.</td></tr>`; return; }
+    table.innerHTML = `
+      <thead><tr><th>ID</th><th>Name</th><th>Subject</th><th>Created</th><th></th></tr></thead>
+      <tbody>${templates.map(t => `
+        <tr>
+          <td class="id">${t.id.slice(0,8)}</td>
+          <td>${t.name}</td>
+          <td>${t.subject || '-'}</td>
+          <td>${fmt(t.created_at)}</td>
+          <td><button class="btn btn-danger btn-sm" onclick="removeTemplate('${t.id}','${t.name}')">Delete</button></td>
+        </tr>`).join('')}</tbody>`;
+  } catch(e) {
+    showError('error-templates', e.message);
+  }
+}
+
+async function addTemplate() {
+  const body = {
+    name: document.getElementById('tmpl-name').value,
+    subject: document.getElementById('tmpl-subject').value,
+    html: document.getElementById('tmpl-html').value || undefined,
+    text: document.getElementById('tmpl-text').value || undefined,
+  };
+  try {
+    await api('/api/templates', { method: 'POST', headers: {'Content-Type':'application/json'}, body: JSON.stringify(body) });
+    closeModal('modal-template');
+    loadTemplates();
+  } catch(e) { alert(e.message); }
+}
+
+async function removeTemplate(id, name) {
+  if (!confirm(`Delete template "${name}"?`)) return;
+  try { await api('/api/templates/' + id, { method: 'DELETE' }); loadTemplates(); }
+  catch(e) { alert(e.message); }
 }
 
 // ─── PROVIDER SELECTS ────────────────────────────────────────────────────────

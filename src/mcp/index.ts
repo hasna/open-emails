@@ -11,6 +11,7 @@ import { listContacts, suppressContact, unsuppressContact } from "../db/contacts
 import { createScheduledEmail, listScheduledEmails, cancelScheduledEmail } from "../db/scheduled.js";
 import { createGroup, getGroupByName, listGroups, deleteGroup, addMember, removeMember, listMembers, getMemberCount } from "../db/groups.js";
 import { storeEmailContent, getEmailContent } from "../db/email-content.js";
+import { listSandboxEmails, getSandboxEmail, clearSandboxEmails } from "../db/sandbox.js";
 import { getDatabase, resolvePartialId } from "../db/database.js";
 import { getAdapter } from "../providers/index.js";
 import { getLocalStats } from "../lib/stats.js";
@@ -64,7 +65,7 @@ server.tool(
   "Add a new email provider (resend, ses, or gmail)",
   {
     name: z.string().describe("Provider name"),
-    type: z.enum(["resend", "ses", "gmail"]).describe("Provider type"),
+    type: z.enum(["resend", "ses", "gmail", "sandbox"]).describe("Provider type"),
     api_key: z.string().optional().describe("Resend API key"),
     region: z.string().optional().describe("SES region (e.g. us-east-1)"),
     access_key: z.string().optional().describe("SES access key ID"),
@@ -81,7 +82,7 @@ server.tool(
       const { skip_validation, ...providerInput } = input;
       const provider = createProvider(providerInput);
 
-      if (!skip_validation) {
+      if (!skip_validation && provider.type !== "sandbox") {
         try {
           const adapter = getAdapter(provider);
           if (provider.type === "gmail") {
@@ -955,6 +956,145 @@ server.tool(
       if (!group) throw new Error(`Group not found: ${group_name}`);
       const members = listMembers(group.id);
       return { content: [{ type: "text", text: JSON.stringify(members, null, 2) }] };
+    } catch (e) {
+      return { content: [{ type: "text", text: `Error: ${formatError(e)}` }], isError: true };
+    }
+  },
+);
+
+// ─── SANDBOX ─────────────────────────────────────────────────────────────────
+
+server.tool(
+  "list_sandbox_emails",
+  "List emails captured by sandbox providers (not actually sent)",
+  {
+    provider_id: z.string().optional().describe("Filter by sandbox provider ID"),
+    limit: z.number().optional().describe("Max results (default 50)"),
+  },
+  async ({ provider_id, limit }) => {
+    try {
+      const resolvedId = provider_id ? resolveId("providers", provider_id) : undefined;
+      const emails = listSandboxEmails(resolvedId, limit ?? 50);
+      return { content: [{ type: "text", text: JSON.stringify(emails, null, 2) }] };
+    } catch (e) {
+      return { content: [{ type: "text", text: `Error: ${formatError(e)}` }], isError: true };
+    }
+  },
+);
+
+server.tool(
+  "get_sandbox_email",
+  "Get a specific sandbox-captured email by ID",
+  {
+    id: z.string().describe("Sandbox email ID (or prefix)"),
+  },
+  async ({ id }) => {
+    try {
+      const db = getDatabase();
+      const resolvedId = resolvePartialId(db, "sandbox_emails", id);
+      if (!resolvedId) throw new Error(`Sandbox email not found: ${id}`);
+      const email = getSandboxEmail(resolvedId, db);
+      if (!email) throw new Error(`Sandbox email not found: ${id}`);
+      return { content: [{ type: "text", text: JSON.stringify(email, null, 2) }] };
+    } catch (e) {
+      return { content: [{ type: "text", text: `Error: ${formatError(e)}` }], isError: true };
+    }
+  },
+);
+
+server.tool(
+  "clear_sandbox_emails",
+  "Delete captured sandbox emails",
+  {
+    provider_id: z.string().optional().describe("Only clear emails for this provider (clears all if not specified)"),
+  },
+  async ({ provider_id }) => {
+    try {
+      const resolvedId = provider_id ? resolveId("providers", provider_id) : undefined;
+      const count = clearSandboxEmails(resolvedId);
+      return { content: [{ type: "text", text: JSON.stringify({ deleted: count }, null, 2) }] };
+    } catch (e) {
+      return { content: [{ type: "text", text: `Error: ${formatError(e)}` }], isError: true };
+    }
+  },
+);
+
+// ─── ANALYTICS ────────────────────────────────────────────────────────────────
+
+server.tool(
+  "get_analytics",
+  "Get email analytics — daily volume, top recipients, busiest hours, delivery trend",
+  {
+    provider_id: z.string().optional().describe("Filter by provider ID"),
+    period: z.string().optional().describe("Time period, e.g. '30d', '7d' (default: 30d)"),
+  },
+  async ({ provider_id, period }) => {
+    try {
+      const resolvedId = provider_id ? resolveId("providers", provider_id) : undefined;
+      const { getAnalytics } = await import("../lib/analytics.js");
+      const data = getAnalytics(resolvedId, period ?? "30d");
+      return { content: [{ type: "text", text: JSON.stringify(data, null, 2) }] };
+    } catch (e) {
+      return { content: [{ type: "text", text: `Error: ${formatError(e)}` }], isError: true };
+    }
+  },
+);
+
+// ─── DOCTOR ───────────────────────────────────────────────────────────────────
+
+server.tool(
+  "run_doctor",
+  "Run full email system diagnostics — check credentials, domains, DB, config",
+  {},
+  async () => {
+    try {
+      const { runDiagnostics } = await import("../lib/doctor.js");
+      const checks = await runDiagnostics();
+      return { content: [{ type: "text", text: JSON.stringify(checks, null, 2) }] };
+    } catch (e) {
+      return { content: [{ type: "text", text: `Error: ${formatError(e)}` }], isError: true };
+    }
+  },
+);
+
+// ─── EXPORT ───────────────────────────────────────────────────────────────────
+
+server.tool(
+  "export_emails",
+  "Export emails as CSV or JSON string",
+  {
+    format: z.enum(["csv", "json"]).optional().describe("Output format (default: json)"),
+    provider_id: z.string().optional().describe("Filter by provider ID"),
+    since: z.string().optional().describe("ISO 8601 datetime to filter from"),
+  },
+  async ({ format, provider_id, since }) => {
+    try {
+      const resolvedId = provider_id ? resolveId("providers", provider_id) : undefined;
+      const filters = { provider_id: resolvedId, since };
+      const { exportEmailsCsv, exportEmailsJson } = await import("../lib/export.js");
+      const output = (format ?? "json") === "csv" ? exportEmailsCsv(filters) : exportEmailsJson(filters);
+      return { content: [{ type: "text", text: output }] };
+    } catch (e) {
+      return { content: [{ type: "text", text: `Error: ${formatError(e)}` }], isError: true };
+    }
+  },
+);
+
+server.tool(
+  "export_events",
+  "Export events as CSV or JSON string",
+  {
+    format: z.enum(["csv", "json"]).optional().describe("Output format (default: json)"),
+    provider_id: z.string().optional().describe("Filter by provider ID"),
+    since: z.string().optional().describe("ISO 8601 datetime to filter from"),
+  },
+  async ({ format, provider_id, since }) => {
+    try {
+      const resolvedId = provider_id ? resolveId("providers", provider_id) : undefined;
+      const filters = { provider_id: resolvedId, since };
+      const { exportEventsCsv, exportEventsJson } = await import("../lib/export.js");
+      const output = (format ?? "json") === "csv" ? exportEventsCsv(filters) : exportEventsJson(filters);
+      return { content: [{ type: "text", text: output }] };
     } catch (e) {
       return { content: [{ type: "text", text: `Error: ${formatError(e)}` }], isError: true };
     }

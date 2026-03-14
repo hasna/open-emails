@@ -222,6 +222,55 @@ const MIGRATIONS = [
   );
   INSERT OR IGNORE INTO _migrations (id) VALUES (7);
   `,
+
+  // Migration 8: Recreate providers table to expand type CHECK constraint to include gmail and sandbox
+  `
+  CREATE TABLE IF NOT EXISTS providers_new (
+    id TEXT PRIMARY KEY,
+    name TEXT NOT NULL,
+    type TEXT NOT NULL CHECK(type IN ('resend', 'ses', 'gmail', 'sandbox')),
+    api_key TEXT,
+    region TEXT,
+    access_key TEXT,
+    secret_key TEXT,
+    oauth_client_id TEXT,
+    oauth_client_secret TEXT,
+    oauth_refresh_token TEXT,
+    oauth_access_token TEXT,
+    oauth_token_expiry TEXT,
+    active INTEGER NOT NULL DEFAULT 1,
+    created_at TEXT NOT NULL DEFAULT (datetime('now')),
+    updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+  );
+  INSERT OR IGNORE INTO providers_new SELECT id, name, type, api_key, region, access_key, secret_key,
+    oauth_client_id, oauth_client_secret, oauth_refresh_token, oauth_access_token, oauth_token_expiry,
+    active, created_at, updated_at FROM providers;
+  DROP TABLE providers;
+  ALTER TABLE providers_new RENAME TO providers;
+  INSERT OR IGNORE INTO _migrations (id) VALUES (8);
+  `,
+
+  // Migration 9: Sandbox emails table
+  `
+  CREATE TABLE IF NOT EXISTS sandbox_emails (
+    id TEXT PRIMARY KEY,
+    provider_id TEXT NOT NULL REFERENCES providers(id) ON DELETE CASCADE,
+    from_address TEXT NOT NULL,
+    to_addresses TEXT NOT NULL DEFAULT '[]',
+    cc_addresses TEXT NOT NULL DEFAULT '[]',
+    bcc_addresses TEXT NOT NULL DEFAULT '[]',
+    reply_to TEXT,
+    subject TEXT NOT NULL,
+    html TEXT,
+    text_body TEXT,
+    attachments_json TEXT NOT NULL DEFAULT '[]',
+    headers_json TEXT NOT NULL DEFAULT '{}',
+    created_at TEXT NOT NULL DEFAULT (datetime('now'))
+  );
+  CREATE INDEX IF NOT EXISTS idx_sandbox_provider ON sandbox_emails(provider_id);
+  CREATE INDEX IF NOT EXISTS idx_sandbox_created ON sandbox_emails(created_at);
+  INSERT OR IGNORE INTO _migrations (id) VALUES (9);
+  `,
 ];
 
 let _db: Database | null = null;
@@ -380,6 +429,25 @@ function ensureSchema(db: Database): void {
     text_body TEXT,
     headers_json TEXT NOT NULL DEFAULT '{}'
   )`);
+
+  // Ensure sandbox_emails table exists
+  ensureTable(`CREATE TABLE IF NOT EXISTS sandbox_emails (
+    id TEXT PRIMARY KEY,
+    provider_id TEXT NOT NULL REFERENCES providers(id) ON DELETE CASCADE,
+    from_address TEXT NOT NULL,
+    to_addresses TEXT NOT NULL DEFAULT '[]',
+    cc_addresses TEXT NOT NULL DEFAULT '[]',
+    bcc_addresses TEXT NOT NULL DEFAULT '[]',
+    reply_to TEXT,
+    subject TEXT NOT NULL,
+    html TEXT,
+    text_body TEXT,
+    attachments_json TEXT NOT NULL DEFAULT '[]',
+    headers_json TEXT NOT NULL DEFAULT '{}',
+    created_at TEXT NOT NULL DEFAULT (datetime('now'))
+  )`);
+  ensureIndex("CREATE INDEX IF NOT EXISTS idx_sandbox_provider ON sandbox_emails(provider_id)");
+  ensureIndex("CREATE INDEX IF NOT EXISTS idx_sandbox_created ON sandbox_emails(created_at)");
 }
 
 export function closeDatabase(): void {
