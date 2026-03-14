@@ -135,11 +135,12 @@ function tooManyRequests(): Response {
   return json({ error: "Too many requests. Please slow down." }, 429);
 }
 
-export async function startServer(port = 3900): Promise<void> {
+export async function startServer(port = 3900, hostname = "127.0.0.1"): Promise<void> {
   const dashboardDir = resolveDashboardDir();
 
   const server = Bun.serve({
     port,
+    hostname,
     async fetch(req) {
       const url = new URL(req.url);
       const path = url.pathname;
@@ -986,7 +987,7 @@ export async function startServer(port = 3900): Promise<void> {
     },
   });
 
-  console.log(`\nEmails dashboard running at http://localhost:${server.port}`);
-  console.log(`API available at http://localhost:${server.port}/api`);
+  console.log(`\nEmails dashboard running at http://${hostname}:${server.port}`);
+  console.log(`API available at http://${hostname}:${server.port}/api`);
   console.log(`Press Ctrl+C to stop\n`);
 }

@@ -9,10 +9,29 @@ export function registerServeCommands(program: Command, _output: (data: unknown,
     .command("serve")
     .description("Start the HTTP server and dashboard")
     .option("--port <port>", "Port to listen on", "3900")
-    .action(async (opts: { port?: string }) => {
+    .option("--host <host>", "Host to bind to (default: 127.0.0.1, use 0.0.0.0 for all interfaces)", "127.0.0.1")
+    .option("--webhook-port <port>", "Also start webhook listener on this port")
+    .option("--smtp-port <port>", "Also start SMTP inbound listener on this port")
+    .option("--all", "Start all listeners (HTTP :3900, webhook :9877, SMTP :2525)")
+    .option("--provider <id>", "Provider ID for inbound/webhook listeners")
+    .action(async (opts: { port?: string; host?: string; webhookPort?: string; smtpPort?: string; all?: boolean; provider?: string }) => {
       const { startServer } = await import("../../server/serve.js");
       const port = parseInt(opts.port ?? "3900", 10);
-      await startServer(port);
+      const host = opts.host ?? "127.0.0.1";
+      await startServer(port, host);
+
+      const webhookPort = opts.all ? 9877 : (opts.webhookPort ? parseInt(opts.webhookPort, 10) : null);
+      const smtpPort = opts.all ? 2525 : (opts.smtpPort ? parseInt(opts.smtpPort, 10) : null);
+      if (webhookPort) {
+        const { createWebhookServer } = await import("../../lib/webhook.js");
+        createWebhookServer(webhookPort, opts.provider);
+        console.log(chalk.dim(`  Webhook listener on port ${webhookPort}`));
+      }
+      if (smtpPort) {
+        const { createSmtpServer } = await import("../../lib/inbound.js");
+        createSmtpServer(smtpPort, opts.provider);
+        console.log(chalk.dim(`  SMTP listener on port ${smtpPort}`));
+      }
     });
 
   // ─── MCP ──────────────────────────────────────────────────────────────────────
