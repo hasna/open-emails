@@ -82,6 +82,16 @@ function resolveId(table: string, partialId: string): string | null {
   return resolvePartialId(db, table, partialId);
 }
 
+const CREDENTIAL_FIELDS = ["api_key", "secret_key", "access_key", "oauth_client_secret", "oauth_refresh_token", "oauth_access_token"] as const;
+
+function sanitizeProvider(provider: Record<string, unknown>): Record<string, unknown> {
+  const sanitized = { ...provider };
+  for (const field of CREDENTIAL_FIELDS) {
+    if (sanitized[field]) sanitized[field] = "***";
+  }
+  return sanitized;
+}
+
 async function parseBody(req: Request): Promise<unknown> {
   try {
     return await req.json();
@@ -117,7 +127,7 @@ export async function startServer(port = 3900): Promise<void> {
       // GET /api/providers
       if (path === "/api/providers" && method === "GET") {
         try {
-          return json(listProviders());
+          return json(listProviders().map(p => sanitizeProvider(p as unknown as Record<string, unknown>)));
         } catch (e) { return internalError(e); }
       }
 
@@ -138,7 +148,7 @@ export async function startServer(port = 3900): Promise<void> {
             oauth_access_token: body.oauth_access_token as string | undefined,
             oauth_token_expiry: body.oauth_token_expiry as string | undefined,
           });
-          return json(provider, 201);
+          return json(sanitizeProvider(provider as unknown as Record<string, unknown>), 201);
         } catch (e) { return internalError(e); }
       }
 
@@ -156,7 +166,7 @@ export async function startServer(port = 3900): Promise<void> {
             if (body[key] !== undefined) updates[key] = body[key];
           }
           const updated = updateProvider(id, updates as any);
-          return json(updated);
+          return json(sanitizeProvider(updated as unknown as Record<string, unknown>));
         } catch (e) { return internalError(e); }
       }
 
