@@ -131,6 +131,7 @@ export interface SendEmailOptions {
   tags?: Record<string, string>;
   headers?: Record<string, string>;
   unsubscribe_url?: string;  // Auto-injects List-Unsubscribe + List-Unsubscribe-Post headers (RFC 8058)
+  idempotency_key?: string;  // If provided and already sent, returns existing email instead of re-sending
 }
 
 // Email log

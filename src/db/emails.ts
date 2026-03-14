@@ -31,9 +31,16 @@ export function createEmail(
   const bccArr = opts.bcc ? (Array.isArray(opts.bcc) ? opts.bcc : [opts.bcc]) : [];
   const attachCount = opts.attachments?.length ?? 0;
 
+  // Idempotency: if key provided and already sent, return existing email
+  const idempotencyKey = (opts as Record<string, unknown>).idempotency_key as string | undefined;
+  if (idempotencyKey) {
+    const existing = d.query("SELECT * FROM emails WHERE idempotency_key = ?").get(idempotencyKey) as EmailRow | null;
+    if (existing) return rowToEmail(existing);
+  }
+
   d.run(
-    `INSERT INTO emails (id, provider_id, provider_message_id, from_address, to_addresses, cc_addresses, bcc_addresses, reply_to, subject, status, has_attachments, attachment_count, tags, sent_at, created_at, updated_at)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'sent', ?, ?, ?, ?, ?, ?)`,
+    `INSERT INTO emails (id, provider_id, provider_message_id, from_address, to_addresses, cc_addresses, bcc_addresses, reply_to, subject, status, has_attachments, attachment_count, tags, idempotency_key, sent_at, created_at, updated_at)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'sent', ?, ?, ?, ?, ?, ?, ?)`,
     [
       id,
       provider_id,
@@ -47,6 +54,7 @@ export function createEmail(
       attachCount > 0 ? 1 : 0,
       attachCount,
       JSON.stringify(opts.tags || {}),
+      idempotencyKey || null,
       timestamp,
       timestamp,
       timestamp,

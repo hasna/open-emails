@@ -614,6 +614,7 @@ program
   .option("--force", "Send even if recipients are suppressed")
   .option("--schedule <datetime>", "Schedule email for later (ISO 8601 datetime)")
   .option("--unsubscribe-url <url>", "Inject List-Unsubscribe headers (RFC 8058 one-click)")
+  .option("--idempotency-key <key>", "Prevent duplicate sends — returns existing email if key was used before")
   .action(async (opts: {
     from: string;
     to?: string[];
@@ -766,6 +767,7 @@ program
         html: htmlBody,
         attachments: attachments.length > 0 ? attachments : undefined,
         unsubscribe_url: (opts as Record<string, unknown>).unsubscribeUrl as string | undefined,
+        idempotency_key: (opts as Record<string, unknown>).idempotencyKey as string | undefined,
       };
 
       const adapter = getAdapter(provider!);

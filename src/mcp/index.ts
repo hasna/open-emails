@@ -451,6 +451,7 @@ server.tool(
     tags: z.record(z.string()).optional().describe("Key-value tags"),
     headers: z.record(z.string()).optional().describe("Custom email headers"),
     unsubscribe_url: z.string().optional().describe("Auto-inject List-Unsubscribe headers (RFC 8058 one-click)"),
+    idempotency_key: z.string().optional().describe("Prevent duplicate sends — returns existing email if key was used before"),
   },
   async (input) => {
     try {

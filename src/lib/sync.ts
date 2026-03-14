@@ -4,7 +4,31 @@ import { getEmail } from "../db/emails.js";
 import { upsertEvent } from "../db/events.js";
 import { incrementBounceCount, incrementComplaintCount } from "../db/contacts.js";
 import { getAdapter } from "../providers/index.js";
+import { getLocalStats } from "./stats.js";
+import { getConfigValue } from "./config.js";
 import type { Database } from "bun:sqlite";
+
+function checkAlerts(providerId: string, providerName: string, d: Database): void {
+  const bounceThreshold = Number(getConfigValue("bounce-alert-threshold") ?? 0);
+  const complaintThreshold = Number(getConfigValue("complaint-alert-threshold") ?? 0);
+  if (!bounceThreshold && !complaintThreshold) return;
+
+  try {
+    const stats = getLocalStats(providerId, "30d", d);
+    if (bounceThreshold && stats.bounce_rate > bounceThreshold) {
+      process.stderr.write(
+        `\n⚠️  ALERT [${providerName}]: Bounce rate ${stats.bounce_rate.toFixed(1)}% exceeds threshold ${bounceThreshold}% (last 30d)\n`,
+      );
+    }
+    if (complaintThreshold && stats.complained > complaintThreshold) {
+      process.stderr.write(
+        `\n⚠️  ALERT [${providerName}]: Complaint rate ${(stats.complained / Math.max(stats.sent, 1) * 100).toFixed(2)}% exceeds threshold ${complaintThreshold}% (last 30d)\n`,
+      );
+    }
+  } catch {
+    // Don't fail sync if alert check errors
+  }
+}
 
 export async function syncProvider(providerId: string, db?: Database): Promise<number> {
   const d = db || getDatabase();
@@ -75,6 +99,11 @@ export async function syncProvider(providerId: string, db?: Database): Promise<n
     }
 
     inserted++;
+  }
+
+  // Check bounce/complaint thresholds after sync
+  if (inserted > 0) {
+    checkAlerts(providerId, provider.name, d);
   }
 
   return inserted;

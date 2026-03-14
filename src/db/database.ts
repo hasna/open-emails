@@ -271,6 +271,13 @@ const MIGRATIONS = [
   CREATE INDEX IF NOT EXISTS idx_sandbox_created ON sandbox_emails(created_at);
   INSERT OR IGNORE INTO _migrations (id) VALUES (9);
   `,
+
+  // Migration 10: Add idempotency_key to emails table for dedup on retry
+  `
+  ALTER TABLE emails ADD COLUMN idempotency_key TEXT;
+  CREATE UNIQUE INDEX IF NOT EXISTS idx_emails_idempotency ON emails(idempotency_key) WHERE idempotency_key IS NOT NULL;
+  INSERT OR IGNORE INTO _migrations (id) VALUES (10);
+  `,
 ];
 
 let _db: Database | null = null;
