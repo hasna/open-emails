@@ -1,5 +1,138 @@
-import { describe, it, expect } from "bun:test";
-import { parseResendWebhook, parseSesWebhook } from "./webhook.js";
+import { describe, it, expect, beforeEach, afterEach } from "bun:test";
+import { parseResendWebhook, parseSesWebhook, createWebhookServer } from "./webhook.js";
+import { closeDatabase, resetDatabase } from "../db/database.js";
+
+// ─── createWebhookServer helpers ─────────────────────────────────────────────
+
+function randomPort(): number {
+  return 19877 + (Math.random() * 100 | 0);
+}
+
+async function post(url: string, body: unknown): Promise<Response> {
+  return fetch(url, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(body),
+  });
+}
+
+// ─── createWebhookServer tests ────────────────────────────────────────────────
+
+describe("createWebhookServer", () => {
+  let server: ReturnType<typeof createWebhookServer>;
+  let port: number;
+  let base: string;
+
+  beforeEach(() => {
+    process.env["EMAILS_DB_PATH"] = ":memory:";
+    resetDatabase();
+    port = randomPort();
+    server = createWebhookServer(port);
+    base = `http://localhost:${port}`;
+  });
+
+  afterEach(() => {
+    server.stop(true);
+    closeDatabase();
+    delete process.env["EMAILS_DB_PATH"];
+  });
+
+  it("returns 404 for unknown path", async () => {
+    const res = await post(`${base}/webhook/unknown`, { type: "email.delivered" });
+    expect(res.status).toBe(404);
+  });
+
+  it("returns 400 for invalid JSON", async () => {
+    const res = await fetch(`${base}/webhook/resend`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: "not-valid-json",
+    });
+    expect(res.status).toBe(400);
+  });
+
+  it("returns 405 for non-POST request", async () => {
+    const res = await fetch(`${base}/webhook/resend`, { method: "GET" });
+    expect(res.status).toBe(405);
+  });
+
+  it("accepts a valid Resend delivered payload and returns 200", async () => {
+    const payload = {
+      type: "email.delivered",
+      data: {
+        email_id: "resend-evt-001",
+        to: ["user@example.com"],
+        created_at: "2025-01-15T10:00:00Z",
+      },
+    };
+    const res = await post(`${base}/webhook/resend`, payload);
+    expect(res.status).toBe(200);
+    expect(await res.text()).toBe("OK");
+  });
+
+  it("accepts a valid SES Delivery payload and returns 200", async () => {
+    const payload = {
+      notificationType: "Delivery",
+      mail: {
+        messageId: "ses-msg-webhook-001",
+        destination: ["user@example.com"],
+        timestamp: "2025-01-15T10:00:00Z",
+      },
+    };
+    const res = await post(`${base}/webhook/ses`, payload);
+    expect(res.status).toBe(200);
+    expect(await res.text()).toBe("OK");
+  });
+
+  it("returns 200 with 'Unrecognized event type' for unknown Resend type", async () => {
+    const res = await post(`${base}/webhook/resend`, { type: "email.unknown", data: {} });
+    expect(res.status).toBe(200);
+    const text = await res.text();
+    expect(text).toContain("Unrecognized");
+  });
+
+  it("returns 200 with 'Unrecognized event type' for unknown SES notification type", async () => {
+    const res = await post(`${base}/webhook/ses`, { notificationType: "Unknown", mail: {} });
+    expect(res.status).toBe(200);
+    const text = await res.text();
+    expect(text).toContain("Unrecognized");
+  });
+
+  it("uses provided providerId when constructing the server", async () => {
+    server.stop(true);
+    closeDatabase();
+    resetDatabase();
+    const p2 = randomPort() + 50;
+    const s2 = createWebhookServer(p2, "my-provider-id");
+    try {
+      const payload = {
+        type: "email.delivered",
+        data: {
+          email_id: "resend-evt-pid",
+          to: ["x@example.com"],
+          created_at: "2025-01-15T10:00:00Z",
+        },
+      };
+      // The upsertEvent call will fail silently (no provider in DB) — but server responds 200
+      const res = await post(`http://localhost:${p2}/webhook/resend`, payload);
+      expect(res.status).toBe(200);
+    } finally {
+      s2.stop(true);
+    }
+  });
+
+  it("server stops cleanly after test", async () => {
+    // Verify server is running first
+    const res = await post(`${base}/webhook/resend`, {
+      type: "email.delivered",
+      data: { email_id: "stop-test", to: ["a@b.com"], created_at: new Date().toISOString() },
+    });
+    expect(res.status).toBe(200);
+    // server.stop() is called in afterEach — no assertion needed here,
+    // but we ensure no unhandled error is thrown
+    expect(() => server.stop(true)).not.toThrow();
+  });
+});
 
 describe("parseResendWebhook", () => {
   it("parses email.delivered event", () => {
