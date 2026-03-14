@@ -8,6 +8,8 @@ import {
   deleteInboundEmail,
   clearInboundEmails,
   getInboundCount,
+  listReplies,
+  getReplyCount,
 } from "./inbound.js";
 
 function makeDb(): Database {
@@ -168,5 +170,92 @@ describe("getInboundCount", () => {
     storeInboundEmail({ ...sampleInput, provider_id: provA }, db);
     storeInboundEmail(sampleInput, db);
     expect(getInboundCount(provA, db)).toBe(1);
+  });
+});
+
+// Helper: insert a provider + email into DB, return the email ID
+function insertSentEmail(db: Database, providerMsgId: string): string {
+  const pId = uuid();
+  db.run(`INSERT INTO providers (id, name, type) VALUES (?, 'p', 'sandbox')`, [pId]);
+  const eId = uuid();
+  db.run(
+    `INSERT INTO emails (id, provider_id, provider_message_id, from_address, to_addresses, cc_addresses, bcc_addresses, subject, status, sent_at, created_at, updated_at)
+     VALUES (?, ?, ?, 'hello@example.com', '[]', '[]', '[]', 'Hi', 'sent', datetime('now'), datetime('now'), datetime('now'))`,
+    [eId, pId, providerMsgId],
+  );
+  return eId;
+}
+
+// ─── Reply tracking ────────────────────────────────────────────────────────────
+
+describe("reply tracking (in_reply_to_email_id)", () => {
+  it("stores in_reply_to_email_id when provided explicitly (valid FK)", () => {
+    const db = makeDb();
+    const sentId = insertSentEmail(db, "explicit-msg-id");
+    const email = storeInboundEmail({ ...sampleInput, in_reply_to_email_id: sentId }, db);
+    expect(email.in_reply_to_email_id).toBe(sentId);
+  });
+
+  it("auto-detects reply via In-Reply-To header matching provider_message_id", () => {
+    const db = makeDb();
+    const sentId = insertSentEmail(db, "original-msg-id-123");
+    const inbound = storeInboundEmail({
+      ...sampleInput,
+      in_reply_to_email_id: null,
+      headers: { "In-Reply-To": "<original-msg-id-123>" },
+    }, db);
+    expect(inbound.in_reply_to_email_id).toBe(sentId);
+  });
+
+  it("auto-detects via References header", () => {
+    const db = makeDb();
+    const sentId = insertSentEmail(db, "ref-msg-456");
+    const inbound = storeInboundEmail({
+      ...sampleInput,
+      in_reply_to_email_id: null,
+      headers: { "References": "other-id-111 <ref-msg-456> another-id-222" },
+    }, db);
+    expect(inbound.in_reply_to_email_id).toBe(sentId);
+  });
+
+  it("returns null in_reply_to_email_id when no matching email found", () => {
+    const db = makeDb();
+    const inbound = storeInboundEmail({
+      ...sampleInput,
+      in_reply_to_email_id: null,
+      headers: { "In-Reply-To": "<nonexistent-msg-id>" },
+    }, db);
+    expect(inbound.in_reply_to_email_id).toBeNull();
+  });
+});
+
+// ─── listReplies + getReplyCount ───────────────────────────────────────────────
+
+describe("listReplies", () => {
+  it("lists inbound emails linked to a sent email", () => {
+    const db = makeDb();
+    const sentId = insertSentEmail(db, "list-mid-1");
+    storeInboundEmail({ ...sampleInput, in_reply_to_email_id: sentId }, db);
+    storeInboundEmail({ ...sampleInput, in_reply_to_email_id: sentId }, db);
+    expect(listReplies(sentId, db).length).toBe(2);
+  });
+
+  it("returns empty array when no replies", () => {
+    const db = makeDb();
+    expect(listReplies("nonexistent-email-id", db)).toEqual([]);
+  });
+});
+
+describe("getReplyCount", () => {
+  it("counts replies for a sent email", () => {
+    const db = makeDb();
+    const sentId = insertSentEmail(db, "count-mid-2");
+    storeInboundEmail({ ...sampleInput, in_reply_to_email_id: sentId }, db);
+    expect(getReplyCount(sentId, db)).toBe(1);
+  });
+
+  it("returns 0 for email with no replies", () => {
+    const db = makeDb();
+    expect(getReplyCount("nonexistent", db)).toBe(0);
   });
 });
