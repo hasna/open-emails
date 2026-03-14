@@ -151,6 +151,7 @@ export interface Email {
   has_attachments: boolean;
   attachment_count: number;
   tags: Record<string, string>;
+  idempotency_key?: string | null;
   sent_at: string;
   created_at: string;
   updated_at: string;
@@ -170,6 +171,7 @@ export interface EmailRow {
   has_attachments: number;
   attachment_count: number;
   tags: string;
+  idempotency_key?: string | null;
   sent_at: string;
   created_at: string;
   updated_at: string;
