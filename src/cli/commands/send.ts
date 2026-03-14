@@ -125,6 +125,31 @@ export function registerSendCommands(program: Command, output: (data: unknown, f
         const provider = getProvider(providerId, db);
         if (!provider) handleError(new Error(`Provider not found: ${providerId}`));
 
+        // Check domain warming limits
+        const fromDomain = opts.from?.split("@")[1];
+        if (fromDomain) {
+          const { getWarmingSchedule } = await import("../../db/warming.js");
+          const { getTodayLimit, getTodaySentCount } = await import("../../lib/warming.js");
+          const warmingSchedule = getWarmingSchedule(fromDomain, db);
+          if (warmingSchedule) {
+            const limit = getTodayLimit(warmingSchedule);
+            if (limit !== null) {
+              const sent = getTodaySentCount(fromDomain, db);
+              if (sent >= limit) {
+                const enforceWarming = !!(opts as Record<string, unknown>).force;
+                const msg = `Warming limit reached for ${fromDomain}: ${sent}/${limit} emails sent today.`;
+                if (enforceWarming) {
+                  log.warn(chalk.yellow(`⚠ ${msg} (--force bypasses warming)`));
+                } else {
+                  handleError(new Error(`${msg} Use --force to bypass or wait until tomorrow.`));
+                }
+              } else if (sent >= limit * 0.8) {
+                log.warn(chalk.yellow(`⚠ Warming: ${sent}/${limit} emails sent today from ${fromDomain} (${Math.round(sent/limit*100)}%)`));
+              }
+            }
+          }
+        }
+
         // Read attachments
         const MAX_ATTACHMENT_SIZE = 25 * 1024 * 1024; // 25MB (Resend/SES limit)
         const MAX_ATTACHMENT_COUNT = 10;
