@@ -302,6 +302,50 @@ const MIGRATIONS = [
   CREATE INDEX IF NOT EXISTS idx_inbound_provider ON inbound_emails(provider_id);
   INSERT OR IGNORE INTO _migrations (id) VALUES (11);
   `,
+
+  // Migration 12: Sequences, sequence_steps, sequence_enrollments tables
+  `
+  CREATE TABLE IF NOT EXISTS sequences (
+    id TEXT PRIMARY KEY,
+    name TEXT NOT NULL UNIQUE,
+    description TEXT,
+    status TEXT NOT NULL DEFAULT 'active' CHECK(status IN ('active', 'paused', 'archived')),
+    created_at TEXT NOT NULL DEFAULT (datetime('now')),
+    updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+  );
+  CREATE INDEX IF NOT EXISTS idx_sequences_name ON sequences(name);
+
+  CREATE TABLE IF NOT EXISTS sequence_steps (
+    id TEXT PRIMARY KEY,
+    sequence_id TEXT NOT NULL REFERENCES sequences(id) ON DELETE CASCADE,
+    step_number INTEGER NOT NULL,
+    delay_hours INTEGER NOT NULL DEFAULT 24,
+    template_name TEXT NOT NULL,
+    from_address TEXT,
+    subject_override TEXT,
+    created_at TEXT NOT NULL DEFAULT (datetime('now')),
+    UNIQUE(sequence_id, step_number)
+  );
+  CREATE INDEX IF NOT EXISTS idx_steps_sequence ON sequence_steps(sequence_id);
+
+  CREATE TABLE IF NOT EXISTS sequence_enrollments (
+    id TEXT PRIMARY KEY,
+    sequence_id TEXT NOT NULL REFERENCES sequences(id) ON DELETE CASCADE,
+    contact_email TEXT NOT NULL,
+    provider_id TEXT REFERENCES providers(id) ON DELETE SET NULL,
+    current_step INTEGER NOT NULL DEFAULT 0,
+    status TEXT NOT NULL DEFAULT 'active' CHECK(status IN ('active', 'completed', 'cancelled')),
+    enrolled_at TEXT NOT NULL DEFAULT (datetime('now')),
+    next_send_at TEXT,
+    completed_at TEXT,
+    UNIQUE(sequence_id, contact_email)
+  );
+  CREATE INDEX IF NOT EXISTS idx_enrollments_sequence ON sequence_enrollments(sequence_id);
+  CREATE INDEX IF NOT EXISTS idx_enrollments_email ON sequence_enrollments(contact_email);
+  CREATE INDEX IF NOT EXISTS idx_enrollments_next_send ON sequence_enrollments(next_send_at);
+  CREATE INDEX IF NOT EXISTS idx_enrollments_status ON sequence_enrollments(status);
+  INSERT OR IGNORE INTO _migrations (id) VALUES (12);
+  `,
 ];
 
 let _db: Database | null = null;
@@ -500,6 +544,47 @@ function ensureSchema(db: Database): void {
   ensureIndex("CREATE INDEX IF NOT EXISTS idx_inbound_from ON inbound_emails(from_address)");
   ensureIndex("CREATE INDEX IF NOT EXISTS idx_inbound_received ON inbound_emails(received_at)");
   ensureIndex("CREATE INDEX IF NOT EXISTS idx_inbound_provider ON inbound_emails(provider_id)");
+
+  // Ensure sequences tables exist
+  ensureTable(`CREATE TABLE IF NOT EXISTS sequences (
+    id TEXT PRIMARY KEY,
+    name TEXT NOT NULL UNIQUE,
+    description TEXT,
+    status TEXT NOT NULL DEFAULT 'active' CHECK(status IN ('active', 'paused', 'archived')),
+    created_at TEXT NOT NULL DEFAULT (datetime('now')),
+    updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+  )`);
+  ensureIndex("CREATE INDEX IF NOT EXISTS idx_sequences_name ON sequences(name)");
+
+  ensureTable(`CREATE TABLE IF NOT EXISTS sequence_steps (
+    id TEXT PRIMARY KEY,
+    sequence_id TEXT NOT NULL REFERENCES sequences(id) ON DELETE CASCADE,
+    step_number INTEGER NOT NULL,
+    delay_hours INTEGER NOT NULL DEFAULT 24,
+    template_name TEXT NOT NULL,
+    from_address TEXT,
+    subject_override TEXT,
+    created_at TEXT NOT NULL DEFAULT (datetime('now')),
+    UNIQUE(sequence_id, step_number)
+  )`);
+  ensureIndex("CREATE INDEX IF NOT EXISTS idx_steps_sequence ON sequence_steps(sequence_id)");
+
+  ensureTable(`CREATE TABLE IF NOT EXISTS sequence_enrollments (
+    id TEXT PRIMARY KEY,
+    sequence_id TEXT NOT NULL REFERENCES sequences(id) ON DELETE CASCADE,
+    contact_email TEXT NOT NULL,
+    provider_id TEXT REFERENCES providers(id) ON DELETE SET NULL,
+    current_step INTEGER NOT NULL DEFAULT 0,
+    status TEXT NOT NULL DEFAULT 'active' CHECK(status IN ('active', 'completed', 'cancelled')),
+    enrolled_at TEXT NOT NULL DEFAULT (datetime('now')),
+    next_send_at TEXT,
+    completed_at TEXT,
+    UNIQUE(sequence_id, contact_email)
+  )`);
+  ensureIndex("CREATE INDEX IF NOT EXISTS idx_enrollments_sequence ON sequence_enrollments(sequence_id)");
+  ensureIndex("CREATE INDEX IF NOT EXISTS idx_enrollments_email ON sequence_enrollments(contact_email)");
+  ensureIndex("CREATE INDEX IF NOT EXISTS idx_enrollments_next_send ON sequence_enrollments(next_send_at)");
+  ensureIndex("CREATE INDEX IF NOT EXISTS idx_enrollments_status ON sequence_enrollments(status)");
 }
 
 export function closeDatabase(): void {

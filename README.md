@@ -72,6 +72,111 @@ The command opens a browser for the OAuth consent flow and saves the refresh tok
 emails provider auth <provider-id>
 ```
 
+## Sandbox Provider (Dev Mode)
+
+The sandbox provider captures emails locally without delivering them — ideal for development and CI.
+
+```bash
+emails provider add --name dev --type sandbox
+```
+
+Use it like any other provider. Emails sent to it are stored in the local database and printed to stderr:
+
+```
+[sandbox] Email captured: Welcome, Alice → alice@example.com (id: abc12345)
+```
+
+Inspect captured emails:
+
+```bash
+emails sandbox list                    # List all captured emails
+emails sandbox show <id>               # Show full email details
+emails sandbox open <id>               # Open HTML in browser
+emails sandbox clear                   # Delete all captured emails
+emails sandbox count                   # Show count
+```
+
+## Inbound Email
+
+Receive inbound emails over SMTP or via a webhook from Resend.
+
+### SMTP listener
+
+```bash
+emails inbound listen --port 2525
+```
+
+Starts a minimal SMTP server. Point your mail transfer agent (or test scripts) at `localhost:2525`.
+
+### Resend inbound webhook
+
+In the Resend dashboard configure an inbound route pointing to `POST /api/inbound` on your server (or expose locally with ngrok). The endpoint accepts Resend's inbound JSON payload and stores the email.
+
+```bash
+# Expose locally for testing
+ngrok http 3456
+emails webhook --port 3456
+# Then configure https://your-ngrok-url/api/inbound in Resend
+```
+
+### Inspect inbound emails
+
+```bash
+emails inbound list                    # List received emails
+emails inbound show <id>               # Show full details
+emails inbound open <id>               # Open HTML in browser
+emails inbound clear                   # Delete all received emails
+emails inbound count                   # Show count
+```
+
+## Reliability
+
+### Multi-provider failover
+
+Configure one or more fallback providers. If the primary provider fails at send time, the CLI automatically retries each failover provider in order.
+
+```bash
+emails config set failover-providers <id1>,<id2>
+```
+
+The send command prints a warning when a failover is used:
+
+```
+⚠ Send failed on Resend Production, trying failover...
+  (Used failover provider)
+```
+
+### Idempotency keys
+
+Pass `--idempotency-key` to prevent duplicate sends. If an email with the same key was already sent, the existing record is returned instead of re-sending — safe to call repeatedly on retries.
+
+```bash
+emails send --from hello@yourdomain.com --to user@example.com \
+  --subject "Order confirmed" --body "..." \
+  --idempotency-key order-9876
+```
+
+## Deliverability
+
+### List-Unsubscribe headers (RFC 8058)
+
+Pass `--unsubscribe-url` to automatically inject `List-Unsubscribe` and `List-Unsubscribe-Post` headers conforming to RFC 8058 one-click unsubscribe — required by Gmail and Yahoo for bulk senders.
+
+```bash
+emails send --from hello@yourdomain.com --to user@example.com \
+  --subject "Newsletter" --body "..." \
+  --unsubscribe-url "https://yourdomain.com/unsubscribe?token=abc"
+```
+
+### Bounce and complaint alerts
+
+Set thresholds (as percentages). After each `emails pull`, if the bounce or complaint rate for the last 30 days exceeds the threshold a warning is printed to stderr.
+
+```bash
+emails config set bounce-alert-threshold 5       # Alert when bounce rate > 5%
+emails config set complaint-alert-threshold 0.1  # Alert when complaint rate > 0.1%
+```
+
 ## CLI Reference
 
 All commands support `--json` for machine-readable output, `-q` for quiet mode, and `-v` for verbose debug output.
@@ -81,7 +186,7 @@ All commands support `--json` for machine-readable output, `-q` for quiet mode, 
 Manage email providers.
 
 ```bash
-emails provider add --name <name> --type <resend|ses|gmail> [credentials...]
+emails provider add --name <name> --type <resend|ses|gmail|sandbox> [credentials...]
 emails provider list
 emails provider update <id> [--name <name>] [credentials...]
 emails provider remove <id>
@@ -115,7 +220,7 @@ emails address remove <id>
 
 ### send
 
-Send an email. Supports templates, groups, scheduling, attachments, and piped body.
+Send an email. Supports templates, groups, scheduling, attachments, failover, idempotency keys, and List-Unsubscribe headers.
 
 ```bash
 emails send \
@@ -144,6 +249,16 @@ emails send --from hello@yourdomain.com --to user@example.com \
 emails send --from hello@yourdomain.com --to user@example.com \
   --subject "Report" --body "See attached" --attachment report.pdf
 
+# With List-Unsubscribe (RFC 8058)
+emails send --from hello@yourdomain.com --to user@example.com \
+  --subject "Newsletter" --body "..." \
+  --unsubscribe-url "https://yourdomain.com/unsubscribe?token=abc"
+
+# With idempotency key (safe to retry)
+emails send --from hello@yourdomain.com --to user@example.com \
+  --subject "Order confirmed" --body "..." \
+  --idempotency-key order-9876
+
 # Pipe body from stdin
 cat message.txt | emails send --from hello@yourdomain.com --to user@example.com \
   --subject "From pipe"
@@ -151,6 +266,94 @@ cat message.txt | emails send --from hello@yourdomain.com --to user@example.com 
 # Override provider
 emails send --from hello@yourdomain.com --to user@example.com \
   --subject "Test" --body "Hi" --provider <provider-id>
+```
+
+### batch
+
+Send bulk emails to a list of recipients from a CSV file, using a template for the body.
+
+```bash
+emails batch \
+  --from hello@yourdomain.com \
+  --template welcome \
+  --csv recipients.csv
+```
+
+The CSV must have an `email` column. Any additional columns are available as template variables (e.g. `{{name}}`).
+
+```csv
+email,name
+alice@example.com,Alice
+bob@example.com,Bob
+```
+
+### template
+
+Manage reusable email templates. Subjects and bodies support `{{variable}}` placeholders.
+
+```bash
+emails template add welcome \
+  --subject "Welcome, {{name}}!" \
+  --html "<h1>Hi {{name}}</h1><p><a href='{{link}}'>Get started</a></p>" \
+  --text "Hi {{name}}! Get started: {{link}}"
+
+emails template list
+emails template show <name>
+emails template remove <name>
+```
+
+Load templates from files:
+
+```bash
+emails template add newsletter \
+  --subject "{{title}}" \
+  --html-file templates/newsletter.html \
+  --text-file templates/newsletter.txt
+```
+
+### group
+
+Manage recipient groups for bulk sending.
+
+```bash
+emails group create <name> [--description "..."]
+emails group list
+emails group show <name>
+emails group add <name> <email> [--name "Display Name"] [--vars '{"k":"v"}']
+emails group delete <name> <email>           # Remove a member
+emails group delete <name>                   # Remove the group
+```
+
+Send to a group:
+
+```bash
+emails send --from hello@yourdomain.com --to-group newsletter \
+  --subject "Weekly update" --template newsletter --vars '{}'
+```
+
+### sandbox
+
+Inspect emails captured by sandbox providers (see [Sandbox Provider](#sandbox-provider-dev-mode)).
+
+```bash
+emails sandbox list [--provider <id>] [--limit <n>]
+emails sandbox show <id>
+emails sandbox open <id>
+emails sandbox clear [--provider <id>]
+emails sandbox count [--provider <id>]
+```
+
+### inbound
+
+Receive and inspect inbound emails (see [Inbound Email](#inbound-email)).
+
+```bash
+emails inbound listen [--port 2525] [--provider <id>]
+emails inbound list [--provider <id>] [--limit <n>]
+emails inbound show <id>
+emails inbound open <id>
+emails inbound clear [--provider <id>]
+emails inbound count [--provider <id>]
 ```
 
 ### log
@@ -183,30 +386,6 @@ emails test
 emails test --provider <id>
 ```
 
-### template
-
-Manage reusable email templates. Subjects and bodies support `{{variable}}` placeholders.
-
-```bash
-emails template add welcome \
-  --subject "Welcome, {{name}}!" \
-  --html "<h1>Hi {{name}}</h1><p><a href='{{link}}'>Get started</a></p>" \
-  --text "Hi {{name}}! Get started: {{link}}"
-
-emails template list
-emails template show <name>
-emails template remove <name>
-```
-
-Load templates from files:
-
-```bash
-emails template add newsletter \
-  --subject "{{title}}" \
-  --html-file templates/newsletter.html \
-  --text-file templates/newsletter.txt
-```
-
 ### contacts
 
 Manage the contact list. Suppressed contacts are skipped on send (unless `--force` is used).
@@ -216,32 +395,6 @@ emails contacts list
 emails contacts list --suppressed       # Show only suppressed contacts
 emails contacts suppress <email>
 emails contacts unsuppress <email>
-```
-
-### group
-
-Manage recipient groups for bulk sending.
-
-```bash
-emails group add <name> [--description "..."]
-emails group list
-emails group show <name>
-emails group add-member <name> <email> [--name "Display Name"] [--vars '{"k":"v"}']
-emails group remove-member <name> <email>
-emails group remove <name>
-```
-
-### batch
-
-Send bulk emails to multiple recipients with per-recipient variable substitution.
-
-```bash
-emails batch --from hello@yourdomain.com \
-  --template welcome \
-  --recipients recipients.json
-
-# recipients.json format:
-# [{"email":"a@example.com","vars":{"name":"Alice"}}, ...]
 ```
 
 ### scheduled
@@ -283,6 +436,16 @@ emails stats --provider <id>
 emails stats --period 7d              # 1d, 7d, 30d, 90d
 ```
 
+### analytics
+
+Detailed analytics with ASCII charts: daily send volume, delivery and bounce trends, top recipients, and busiest hours.
+
+```bash
+emails analytics
+emails analytics --provider <id>
+emails analytics --period 30d         # 7d, 30d, 90d
+```
+
 ### monitor
 
 Live dashboard in the terminal (auto-refreshes).
@@ -293,14 +456,22 @@ emails monitor --provider <id>
 emails monitor --interval 30          # Refresh interval in seconds
 ```
 
-### analytics
+### doctor
 
-Detailed analytics: delivery rates, bounce rates, top recipients, click-through.
+Run diagnostics: checks provider connectivity, DNS configuration, database integrity, and scheduled-email backlog.
 
 ```bash
-emails analytics
-emails analytics --provider <id>
-emails analytics --period 30d
+emails doctor
+```
+
+### completion
+
+Generate shell completion scripts.
+
+```bash
+emails completion bash   >> ~/.bashrc
+emails completion zsh    >> ~/.zshrc
+emails completion fish   > ~/.config/fish/completions/emails.fish
 ```
 
 ### webhook
@@ -342,25 +513,10 @@ Manage CLI configuration stored at `~/.emails/config.json`.
 ```bash
 emails config get default_provider
 emails config set default_provider <provider-id>
+emails config set failover-providers <id1>,<id2>
+emails config set bounce-alert-threshold 5
+emails config set complaint-alert-threshold 0.1
 emails config list
-```
-
-### doctor
-
-Run diagnostics: check connectivity, configuration, database integrity.
-
-```bash
-emails doctor
-```
-
-### completion
-
-Generate shell completion scripts.
-
-```bash
-emails completion bash   >> ~/.bashrc
-emails completion zsh    >> ~/.zshrc
-emails completion fish   > ~/.config/fish/completions/emails.fish
 ```
 
 ## MCP Setup
@@ -381,7 +537,23 @@ emails mcp --gemini
 emails mcp --all
 ```
 
-Available MCP tools mirror the CLI: `send_email`, `list_emails`, `search_emails`, `list_providers`, `get_stats`, `pull_events`, `list_contacts`, `manage_templates`, and more.
+Available MCP tools:
+
+| Tool | Description |
+|------|-------------|
+| `send_email` | Send an email (supports idempotency key, unsubscribe URL) |
+| `list_emails` | List sent emails with filters |
+| `search_emails` | Full-text search across sent emails |
+| `list_providers` | List configured providers |
+| `get_stats` | Delivery statistics for a provider |
+| `get_analytics` | Detailed analytics with daily breakdown |
+| `run_doctor` | Run system diagnostics |
+| `pull_events` | Pull delivery events from a provider |
+| `export_emails` | Export emails to CSV or JSON |
+| `list_contacts` | List contacts and suppression status |
+| `manage_templates` | Create, list, and remove templates |
+| `list_sandbox_emails` | List emails captured by sandbox providers |
+| `list_inbound_emails` | List received inbound emails |
 
 ## Dashboard
 
@@ -398,8 +570,8 @@ The dashboard shows real-time delivery metrics, recent emails, bounce rates, and
 
 | File | Description |
 |------|-------------|
-| `~/.emails/config.json` | CLI configuration (default provider, log level, etc.) |
-| `~/.emails/emails.db`   | SQLite database — all emails, events, contacts, templates |
+| `~/.emails/config.json` | CLI configuration (default provider, failover providers, alert thresholds, log level) |
+| `~/.emails/emails.db`   | SQLite database — all emails, events, contacts, templates, sandbox and inbound emails |
 
 Override the database path:
 
@@ -442,6 +614,8 @@ const messageId = await adapter.sendEmail({
   to: "user@example.com",
   subject: "Hello",
   text: "Hello world",
+  unsubscribe_url: "https://yourdomain.com/unsubscribe?token=abc",
+  idempotency_key: "order-9876",
 });
 
 // Start a webhook server

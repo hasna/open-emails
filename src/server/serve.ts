@@ -20,6 +20,11 @@ import { listContacts, suppressContact, unsuppressContact } from "../db/contacts
 import { listTemplates, createTemplate, deleteTemplate } from "../db/templates.js";
 import { listGroups, createGroup, deleteGroup, getGroupByName, listMembers, addMember, removeMember } from "../db/groups.js";
 import { listScheduledEmails, cancelScheduledEmail } from "../db/scheduled.js";
+import {
+  createSequence, getSequence, listSequences, deleteSequence,
+  addStep, listSteps,
+  enroll, unenroll, listEnrollments,
+} from "../db/sequences.js";
 import { getEmailContent } from "../db/email-content.js";
 import { getAnalytics } from "../lib/analytics.js";
 import { listInboundEmails, getInboundEmail, clearInboundEmails } from "../db/inbound.js";
@@ -787,6 +792,109 @@ export async function startServer(port = 3900): Promise<void> {
             result = await syncAll();
           }
           return json(result);
+        } catch (e) { return internalError(e); }
+      }
+
+      // ─── SEQUENCES ───────────────────────────────────────────────────────
+
+      // GET /api/sequences
+      if (path === "/api/sequences" && method === "GET") {
+        try { return json(listSequences()); } catch (e) { return internalError(e); }
+      }
+
+      // POST /api/sequences
+      if (path === "/api/sequences" && method === "POST") {
+        try {
+          const body = await parseBody(req) as Record<string, unknown>;
+          if (!body.name) return badRequest("name is required");
+          const seq = createSequence({ name: String(body.name), description: body.description ? String(body.description) : undefined });
+          return json(seq, 201);
+        } catch (e) { return internalError(e); }
+      }
+
+      // DELETE /api/sequences/:id
+      const seqDeleteMatch = path.match(/^\/api\/sequences\/([^/]+)$/);
+      if (seqDeleteMatch && method === "DELETE") {
+        try {
+          const id = seqDeleteMatch[1]!;
+          const seq = getSequence(id);
+          if (!seq) return notFound("Sequence not found");
+          deleteSequence(seq.id);
+          return json({ deleted: true });
+        } catch (e) { return internalError(e); }
+      }
+
+      // GET /api/sequences/:id/steps
+      const seqStepsMatch = path.match(/^\/api\/sequences\/([^/]+)\/steps$/);
+      if (seqStepsMatch && method === "GET") {
+        try {
+          const id = seqStepsMatch[1]!;
+          const seq = getSequence(id);
+          if (!seq) return notFound("Sequence not found");
+          return json(listSteps(seq.id));
+        } catch (e) { return internalError(e); }
+      }
+
+      // POST /api/sequences/:id/steps
+      if (seqStepsMatch && method === "POST") {
+        try {
+          const id = seqStepsMatch[1]!;
+          const seq = getSequence(id);
+          if (!seq) return notFound("Sequence not found");
+          const body = await parseBody(req) as Record<string, unknown>;
+          if (!body.step_number || !body.template_name) return badRequest("step_number and template_name are required");
+          const step = addStep({
+            sequence_id: seq.id,
+            step_number: Number(body.step_number),
+            delay_hours: body.delay_hours ? Number(body.delay_hours) : 24,
+            template_name: String(body.template_name),
+            from_address: body.from_address ? String(body.from_address) : undefined,
+            subject_override: body.subject_override ? String(body.subject_override) : undefined,
+          });
+          return json(step, 201);
+        } catch (e) { return internalError(e); }
+      }
+
+      // GET /api/sequences/:id/enrollments
+      const seqEnrollmentsMatch = path.match(/^\/api\/sequences\/([^/]+)\/enrollments$/);
+      if (seqEnrollmentsMatch && method === "GET") {
+        try {
+          const id = seqEnrollmentsMatch[1]!;
+          const seq = getSequence(id);
+          if (!seq) return notFound("Sequence not found");
+          return json(listEnrollments({ sequence_id: seq.id }));
+        } catch (e) { return internalError(e); }
+      }
+
+      // POST /api/sequences/:id/enroll
+      const seqEnrollMatch = path.match(/^\/api\/sequences\/([^/]+)\/enroll$/);
+      if (seqEnrollMatch && method === "POST") {
+        try {
+          const id = seqEnrollMatch[1]!;
+          const seq = getSequence(id);
+          if (!seq) return notFound("Sequence not found");
+          const body = await parseBody(req) as Record<string, unknown>;
+          if (!body.contact_email) return badRequest("contact_email is required");
+          const enrollment = enroll({
+            sequence_id: seq.id,
+            contact_email: String(body.contact_email),
+            provider_id: body.provider_id ? String(body.provider_id) : undefined,
+          });
+          return json(enrollment, 201);
+        } catch (e) { return internalError(e); }
+      }
+
+      // DELETE /api/sequences/:id/enrollments/:email
+      const seqUnenrollMatch = path.match(/^\/api\/sequences\/([^/]+)\/enrollments\/(.+)$/);
+      if (seqUnenrollMatch && method === "DELETE") {
+        try {
+          const id = seqUnenrollMatch[1]!;
+          const email = decodeURIComponent(seqUnenrollMatch[2]!);
+          const seq = getSequence(id);
+          if (!seq) return notFound("Sequence not found");
+          const removed = unenroll(seq.id, email);
+          if (!removed) return notFound("Enrollment not found or already inactive");
+          return json({ unenrolled: true });
         } catch (e) { return internalError(e); }
       }
 
