@@ -1,4 +1,5 @@
 import { resolve } from "dns/promises";
+import { createConnection } from "net";
 
 export interface VerifyResult {
   email: string;
@@ -70,7 +71,7 @@ async function smtpProbeCheck(
   return new Promise((resolve, reject) => {
     const timer = setTimeout(() => reject(new Error("SMTP timeout")), timeoutMs);
 
-    const socket = require("net").createConnection({ host, port: 25, timeout: timeoutMs });
+    const socket = createConnection({ host, port: 25 });
     let state = "connect";
     let buffer = "";
 

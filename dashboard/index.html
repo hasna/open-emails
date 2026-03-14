@@ -853,6 +853,48 @@ async function removeTemplate(id, name) {
   catch(e) { alert(e.message); }
 }
 
+// ─── INBOUND ─────────────────────────────────────────────────────────────────
+async function loadInbound() {
+  try {
+    const emails = await api('/api/inbound?limit=50');
+    const table = document.getElementById('table-inbound');
+    if (!emails.length) { table.innerHTML = `<tr><td class="empty">No inbound emails found.</td></tr>`; return; }
+    table.innerHTML = `
+      <thead><tr><th>ID</th><th>From</th><th>To</th><th>Subject</th><th>Received</th></tr></thead>
+      <tbody>${emails.map(e => `
+        <tr>
+          <td class="id">${e.id.slice(0,8)}</td>
+          <td>${e.from_address || '-'}</td>
+          <td>${(e.to_addresses || []).join(', ') || '-'}</td>
+          <td>${e.subject || '-'}</td>
+          <td>${fmt(e.received_at || e.created_at)}</td>
+        </tr>`).join('')}</tbody>`;
+  } catch(e) {
+    showError('error-inbound', e.message);
+  }
+}
+
+// ─── SEQUENCES ───────────────────────────────────────────────────────────────
+async function loadSequences() {
+  try {
+    const sequences = await api('/api/sequences');
+    const table = document.getElementById('table-sequences');
+    if (!sequences.length) { table.innerHTML = `<tr><td class="empty">No sequences found.</td></tr>`; return; }
+    table.innerHTML = `
+      <thead><tr><th>ID</th><th>Name</th><th>Status</th><th>Enrollments</th><th>Created</th></tr></thead>
+      <tbody>${sequences.map(s => `
+        <tr>
+          <td class="id">${s.id.slice(0,8)}</td>
+          <td>${s.name || '-'}</td>
+          <td>${badge(s.status || 'active', s.status === 'active' ? 'verified' : s.status === 'paused' ? 'pending' : 'failed')}</td>
+          <td>${s.enrollment_count ?? s.enrollments ?? 0}</td>
+          <td>${fmt(s.created_at)}</td>
+        </tr>`).join('')}</tbody>`;
+  } catch(e) {
+    showError('error-sequences', e.message);
+  }
+}
+
 // ─── PROVIDER SELECTS ────────────────────────────────────────────────────────
 async function loadProviderSelects() {
   try {

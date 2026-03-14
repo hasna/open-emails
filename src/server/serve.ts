@@ -929,9 +929,13 @@ export async function startServer(port = 3900): Promise<void> {
       if (trackClickMatch && method === "GET") {
         const emailId = trackClickMatch[1]!;
         const encoded = trackClickMatch[2]!;
-        let originalUrl = "https://example.com";
+        let originalUrl = "";
         try {
-          originalUrl = Buffer.from(encoded, "base64url").toString("utf-8");
+          const decoded = Buffer.from(encoded, "base64url").toString("utf-8");
+          // Security: only allow http/https URLs to prevent open redirect to javascript: or file://
+          if (decoded.startsWith("https://") || decoded.startsWith("http://")) {
+            originalUrl = decoded;
+          }
           upsertEvent({
             email_id: emailId,
             provider_id: "tracking",
@@ -943,6 +947,7 @@ export async function startServer(port = 3900): Promise<void> {
           });
         } catch { /* non-fatal — still redirect */ }
 
+        if (!originalUrl) return badRequest("Invalid tracking URL");
         return new Response(null, {
           status: 302,
           headers: { "Location": originalUrl },
