@@ -346,6 +346,23 @@ const MIGRATIONS = [
   CREATE INDEX IF NOT EXISTS idx_enrollments_status ON sequence_enrollments(status);
   INSERT OR IGNORE INTO _migrations (id) VALUES (12);
   `,
+
+  // Migration 13: Warming schedules table
+  `
+  CREATE TABLE IF NOT EXISTS warming_schedules (
+    id TEXT PRIMARY KEY,
+    domain TEXT NOT NULL UNIQUE,
+    provider_id TEXT REFERENCES providers(id) ON DELETE SET NULL,
+    target_daily_volume INTEGER NOT NULL,
+    start_date TEXT NOT NULL,
+    status TEXT NOT NULL DEFAULT 'active' CHECK(status IN ('active', 'paused', 'completed')),
+    created_at TEXT NOT NULL DEFAULT (datetime('now')),
+    updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+  );
+  CREATE INDEX IF NOT EXISTS idx_warming_domain ON warming_schedules(domain);
+  CREATE INDEX IF NOT EXISTS idx_warming_status ON warming_schedules(status);
+  INSERT OR IGNORE INTO _migrations (id) VALUES (13);
+  `,
 ];
 
 let _db: Database | null = null;
@@ -585,6 +602,20 @@ function ensureSchema(db: Database): void {
   ensureIndex("CREATE INDEX IF NOT EXISTS idx_enrollments_email ON sequence_enrollments(contact_email)");
   ensureIndex("CREATE INDEX IF NOT EXISTS idx_enrollments_next_send ON sequence_enrollments(next_send_at)");
   ensureIndex("CREATE INDEX IF NOT EXISTS idx_enrollments_status ON sequence_enrollments(status)");
+
+  // Ensure warming_schedules table exists
+  ensureTable(`CREATE TABLE IF NOT EXISTS warming_schedules (
+    id TEXT PRIMARY KEY,
+    domain TEXT NOT NULL UNIQUE,
+    provider_id TEXT REFERENCES providers(id) ON DELETE SET NULL,
+    target_daily_volume INTEGER NOT NULL,
+    start_date TEXT NOT NULL,
+    status TEXT NOT NULL DEFAULT 'active' CHECK(status IN ('active', 'paused', 'completed')),
+    created_at TEXT NOT NULL DEFAULT (datetime('now')),
+    updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+  )`);
+  ensureIndex("CREATE INDEX IF NOT EXISTS idx_warming_domain ON warming_schedules(domain)");
+  ensureIndex("CREATE INDEX IF NOT EXISTS idx_warming_status ON warming_schedules(status)");
 }
 
 export function closeDatabase(): void {

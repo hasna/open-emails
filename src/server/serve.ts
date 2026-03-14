@@ -32,6 +32,8 @@ import { parseResendInbound, parseMailgunInbound, parseMimeEmail } from "../lib/
 import { storeInboundEmail } from "../db/inbound.js";
 import { runDiagnostics } from "../lib/doctor.js";
 import { exportEmailsCsv, exportEmailsJson, exportEventsCsv, exportEventsJson } from "../lib/export.js";
+import { createWarmingSchedule, getWarmingSchedule, listWarmingSchedules, updateWarmingStatus, deleteWarmingSchedule } from "../db/warming.js";
+import { getTodayLimit, getTodaySentCount } from "../lib/warming.js";
 
 const MIME_TYPES: Record<string, string> = {
   ".html": "text/html; charset=utf-8",
@@ -896,6 +898,74 @@ export async function startServer(port = 3900, hostname = "127.0.0.1"): Promise<
           const removed = unenroll(seq.id, email);
           if (!removed) return notFound("Enrollment not found or already inactive");
           return json({ unenrolled: true });
+        } catch (e) { return internalError(e); }
+      }
+
+      // ─── WARMING ─────────────────────────────────────────────────────────
+
+      // GET /api/warming
+      if (path === "/api/warming" && method === "GET") {
+        try {
+          const url = new URL(req.url);
+          const status = url.searchParams.get("status") ?? undefined;
+          return json(listWarmingSchedules(status));
+        } catch (e) { return internalError(e); }
+      }
+
+      // POST /api/warming
+      if (path === "/api/warming" && method === "POST") {
+        try {
+          const body = await parseBody(req) as Record<string, unknown>;
+          if (!body.domain) return badRequest("domain is required");
+          if (!body.target_daily_volume) return badRequest("target_daily_volume is required");
+          const schedule = createWarmingSchedule({
+            domain: String(body.domain),
+            target_daily_volume: Number(body.target_daily_volume),
+            start_date: body.start_date ? String(body.start_date) : undefined,
+            provider_id: body.provider_id ? String(body.provider_id) : undefined,
+          });
+          return json(schedule, 201);
+        } catch (e) { return internalError(e); }
+      }
+
+      // GET /api/warming/:domain
+      const warmingDomainMatch = path.match(/^\/api\/warming\/([^/]+)$/);
+      if (warmingDomainMatch && method === "GET") {
+        try {
+          const domain = decodeURIComponent(warmingDomainMatch[1]!);
+          const schedule = getWarmingSchedule(domain);
+          if (!schedule) return notFound("Warming schedule not found");
+          const today_limit = getTodayLimit(schedule);
+          const today_sent = getTodaySentCount(domain);
+          const startDate = new Date(schedule.start_date);
+          const today = new Date();
+          today.setHours(0, 0, 0, 0);
+          startDate.setHours(0, 0, 0, 0);
+          const current_day = Math.max(1, Math.floor((today.getTime() - startDate.getTime()) / (1000 * 60 * 60 * 24)) + 1);
+          return json({ schedule, today_limit, today_sent, current_day });
+        } catch (e) { return internalError(e); }
+      }
+
+      // PUT /api/warming/:domain
+      if (warmingDomainMatch && method === "PUT") {
+        try {
+          const domain = decodeURIComponent(warmingDomainMatch[1]!);
+          const body = await parseBody(req) as Record<string, unknown>;
+          if (!body.status) return badRequest("status is required");
+          const status = String(body.status) as "active" | "paused" | "completed";
+          const updated = updateWarmingStatus(domain, status);
+          if (!updated) return notFound("Warming schedule not found");
+          return json(updated);
+        } catch (e) { return internalError(e); }
+      }
+
+      // DELETE /api/warming/:domain
+      if (warmingDomainMatch && method === "DELETE") {
+        try {
+          const domain = decodeURIComponent(warmingDomainMatch[1]!);
+          const deleted = deleteWarmingSchedule(domain);
+          if (!deleted) return notFound("Warming schedule not found");
+          return json({ deleted: true });
         } catch (e) { return internalError(e); }
       }
 

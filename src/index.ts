@@ -133,6 +133,12 @@ export {
   deleteInboundEmail, clearInboundEmails,
 } from "./db/inbound.js";
 
+export {
+  createWarmingSchedule, getWarmingSchedule, listWarmingSchedules, updateWarmingStatus, deleteWarmingSchedule,
+} from "./db/warming.js";
+export { generateWarmingPlan, getTodayLimit, getTodaySentCount, formatWarmingStatus } from "./lib/warming.js";
+export type { WarmingSchedule, WarmingDay } from "./lib/warming.js";
+
 // Provider factory
 export { getAdapter } from "./providers/index.js";
 export type { ProviderAdapter, RemoteDomain, RemoteAddress, RemoteEvent } from "./providers/interface.js";

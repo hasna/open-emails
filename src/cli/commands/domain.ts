@@ -6,6 +6,8 @@ import { getAdapter } from "../../providers/index.js";
 import { formatDnsTable } from "../../lib/dns.js";
 import { colorDnsStatus, truncate, formatDate, tableRow } from "../../lib/format.js";
 import { handleError, resolveId } from "../utils.js";
+import { createWarmingSchedule, getWarmingSchedule, listWarmingSchedules, updateWarmingStatus } from "../../db/warming.js";
+import { formatWarmingStatus, generateWarmingPlan, getTodayLimit, getTodaySentCount } from "../../lib/warming.js";
 
 export function registerDomainCommands(program: Command, output: (data: unknown, formatted: string) => void): void {
   const domainCmd = program.command("domain").description("Manage sending domains");
@@ -218,5 +220,136 @@ export function registerDomainCommands(program: Command, output: (data: unknown,
         }
         console.log();
       } catch (e) { handleError(e); }
+    });
+
+  // ─── WARMING COMMANDS ──────────────────────────────────────────────────────
+
+  domainCmd
+    .command("warm <domain>")
+    .description("Start a warming schedule for a domain")
+    .requiredOption("--target <n>", "Target daily send volume", parseInt)
+    .option("--start-date <YYYY-MM-DD>", "Start date (default: today)")
+    .option("--provider <id>", "Provider ID to associate")
+    .action((domain: string, opts: { target: number; startDate?: string; provider?: string }) => {
+      try {
+        const providerId = opts.provider ? resolveId("providers", opts.provider) : undefined;
+        const schedule = createWarmingSchedule({
+          domain,
+          provider_id: providerId,
+          target_daily_volume: opts.target,
+          start_date: opts.startDate,
+        });
+        console.log(chalk.green(`✓ Warming schedule created for ${domain}`));
+        console.log(formatWarmingStatus(schedule));
+        const plan = generateWarmingPlan(opts.target);
+        console.log(chalk.dim(`\nWill reach target (${opts.target}/day) in ${plan[plan.length - 1]?.day ?? "?"} days`));
+      } catch (e) {
+        handleError(e);
+      }
+    });
+
+  domainCmd
+    .command("warm-status <domain>")
+    .description("Show warming schedule status for a domain")
+    .action((domain: string) => {
+      try {
+        const schedule = getWarmingSchedule(domain);
+        if (!schedule) {
+          console.log(chalk.yellow(`No warming schedule found for ${domain}`));
+          return;
+        }
+        console.log("\n" + formatWarmingStatus(schedule) + "\n");
+      } catch (e) {
+        handleError(e);
+      }
+    });
+
+  domainCmd
+    .command("warm-list")
+    .description("List all domain warming schedules")
+    .option("--status <status>", "Filter by status (active, paused, completed)")
+    .action((opts: { status?: string }) => {
+      try {
+        const schedules = listWarmingSchedules(opts.status);
+        if (schedules.length === 0) {
+          console.log(chalk.dim("No warming schedules found."));
+          return;
+        }
+        console.log("");
+        console.log(tableRow(
+          [chalk.bold("Domain"), 20],
+          [chalk.bold("Status"), 10],
+          [chalk.bold("Start Date"), 12],
+          [chalk.bold("Target"), 10],
+          [chalk.bold("Today's Limit"), 14],
+          [chalk.bold("Sent Today"), 12],
+        ));
+        for (const s of schedules) {
+          const todayLimit = getTodayLimit(s);
+          const todaySent = getTodaySentCount(s.domain);
+          const statusColor = s.status === "active" ? chalk.green(s.status)
+            : s.status === "paused" ? chalk.yellow(s.status)
+            : chalk.dim(s.status);
+          console.log(tableRow(
+            [truncate(s.domain, 20), 20],
+            [statusColor, 10],
+            [s.start_date, 12],
+            [String(s.target_daily_volume), 10],
+            [todayLimit !== null ? String(todayLimit) : chalk.dim("n/a"), 14],
+            [String(todaySent), 12],
+          ));
+        }
+        console.log("");
+      } catch (e) {
+        handleError(e);
+      }
+    });
+
+  domainCmd
+    .command("warm-pause <domain>")
+    .description("Pause a domain warming schedule")
+    .action((domain: string) => {
+      try {
+        const updated = updateWarmingStatus(domain, "paused");
+        if (!updated) {
+          console.log(chalk.yellow(`No warming schedule found for ${domain}`));
+          return;
+        }
+        console.log(chalk.yellow(`⏸ Warming schedule paused for ${domain}`));
+      } catch (e) {
+        handleError(e);
+      }
+    });
+
+  domainCmd
+    .command("warm-resume <domain>")
+    .description("Resume a paused domain warming schedule")
+    .action((domain: string) => {
+      try {
+        const updated = updateWarmingStatus(domain, "active");
+        if (!updated) {
+          console.log(chalk.yellow(`No warming schedule found for ${domain}`));
+          return;
+        }
+        console.log(chalk.green(`▶ Warming schedule resumed for ${domain}`));
+      } catch (e) {
+        handleError(e);
+      }
+    });
+
+  domainCmd
+    .command("warm-complete <domain>")
+    .description("Mark a domain warming schedule as completed")
+    .action((domain: string) => {
+      try {
+        const updated = updateWarmingStatus(domain, "completed");
+        if (!updated) {
+          console.log(chalk.yellow(`No warming schedule found for ${domain}`));
+          return;
+        }
+        console.log(chalk.green(`✓ Warming schedule marked complete for ${domain}`));
+      } catch (e) {
+        handleError(e);
+      }
     });
 }

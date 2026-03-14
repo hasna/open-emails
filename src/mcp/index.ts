@@ -29,6 +29,8 @@ import {
   AddressNotFoundError,
   EmailNotFoundError,
 } from "../types/index.js";
+import { createWarmingSchedule, getWarmingSchedule, listWarmingSchedules, updateWarmingStatus } from "../db/warming.js";
+import { getTodayLimit, getTodaySentCount, generateWarmingPlan } from "../lib/warming.js";
 
 const server = new McpServer({
   name: "emails",
@@ -1351,6 +1353,87 @@ server.tool(
         } catch (e) { failed++; errors.push(`${r.email}: ${e instanceof Error ? e.message : String(e)}`); }
       }
       return { content: [{ type: "text", text: JSON.stringify({ sent, skipped, failed, errors }, null, 2) }] };
+    } catch (e) {
+      return { content: [{ type: "text", text: `Error: ${formatError(e)}` }], isError: true };
+    }
+  },
+);
+
+// ─── WARMING ─────────────────────────────────────────────────────────────────
+
+server.tool(
+  "create_warming_schedule",
+  "Create a domain warming schedule to gradually ramp up email send volume",
+  {
+    domain: z.string().describe("Domain to warm up (e.g. example.com)"),
+    target_daily_volume: z.number().describe("Target daily send volume to reach"),
+    start_date: z.string().optional().describe("Start date in YYYY-MM-DD format (default: today)"),
+    provider_id: z.string().optional().describe("Provider ID to associate with this domain"),
+  },
+  async ({ domain, target_daily_volume, start_date, provider_id }) => {
+    try {
+      const schedule = createWarmingSchedule({ domain, target_daily_volume, start_date, provider_id });
+      const plan = generateWarmingPlan(target_daily_volume);
+      return { content: [{ type: "text", text: JSON.stringify({ schedule, plan_days: plan.length, final_day: plan[plan.length - 1]?.day }, null, 2) }] };
+    } catch (e) {
+      return { content: [{ type: "text", text: `Error: ${formatError(e)}` }], isError: true };
+    }
+  },
+);
+
+server.tool(
+  "get_warming_status",
+  "Get current warming status for a domain including today's limit and sent count",
+  {
+    domain: z.string().describe("Domain to check"),
+  },
+  async ({ domain }) => {
+    try {
+      const schedule = getWarmingSchedule(domain);
+      if (!schedule) throw new Error(`No warming schedule found for domain: ${domain}`);
+      const db = getDatabase();
+      const today_limit = getTodayLimit(schedule);
+      const today_sent = getTodaySentCount(domain, db);
+      const startDate = new Date(schedule.start_date);
+      const today = new Date();
+      today.setHours(0, 0, 0, 0);
+      startDate.setHours(0, 0, 0, 0);
+      const current_day = Math.max(1, Math.floor((today.getTime() - startDate.getTime()) / (1000 * 60 * 60 * 24)) + 1);
+      return { content: [{ type: "text", text: JSON.stringify({ schedule, today_limit, today_sent, current_day }, null, 2) }] };
+    } catch (e) {
+      return { content: [{ type: "text", text: `Error: ${formatError(e)}` }], isError: true };
+    }
+  },
+);
+
+server.tool(
+  "list_warming_schedules",
+  "List all domain warming schedules",
+  {
+    status: z.enum(["active", "paused", "completed"]).optional().describe("Filter by status"),
+  },
+  async ({ status }) => {
+    try {
+      const schedules = listWarmingSchedules(status);
+      return { content: [{ type: "text", text: JSON.stringify(schedules, null, 2) }] };
+    } catch (e) {
+      return { content: [{ type: "text", text: `Error: ${formatError(e)}` }], isError: true };
+    }
+  },
+);
+
+server.tool(
+  "update_warming_status",
+  "Update the status of a domain warming schedule",
+  {
+    domain: z.string().describe("Domain to update"),
+    status: z.enum(["active", "paused", "completed"]).describe("New status"),
+  },
+  async ({ domain, status }) => {
+    try {
+      const updated = updateWarmingStatus(domain, status);
+      if (!updated) throw new Error(`No warming schedule found for domain: ${domain}`);
+      return { content: [{ type: "text", text: JSON.stringify(updated, null, 2) }] };
     } catch (e) {
       return { content: [{ type: "text", text: `Error: ${formatError(e)}` }], isError: true };
     }
