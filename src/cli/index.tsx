@@ -2045,4 +2045,25 @@ inboundCmd
     }
   });
 
+// ─── VERIFY EMAIL ─────────────────────────────────────────────────────────────
+
+program
+  .command("verify-email <email>")
+  .description("Verify an email address (format + MX records + optional SMTP probe)")
+  .option("--smtp", "Also do SMTP probe (RCPT TO check, no email sent)")
+  .option("--timeout <ms>", "DNS/SMTP timeout in milliseconds", "5000")
+  .action(async (email: string, opts: { smtp?: boolean; timeout?: string }) => {
+    try {
+      const { verifyEmailAddress, formatVerifyResult } = await import("../lib/email-verify.js");
+      const result = await verifyEmailAddress(email, {
+        smtpProbe: !!opts.smtp,
+        timeoutMs: parseInt(opts.timeout ?? "5000", 10),
+      });
+      const formatted = formatVerifyResult(result);
+      output(result, result.valid ? chalk.green(formatted) : chalk.red(formatted));
+    } catch (e) {
+      handleError(e);
+    }
+  });
+
 program.parse(process.argv);
