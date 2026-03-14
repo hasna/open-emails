@@ -39,11 +39,11 @@ export async function verifyResendSignature(
  * downloading the cert from AWS which is optional — we at least check the structure.
  */
 export function verifySnsStructure(body: Record<string, unknown>): boolean {
-  // If Type is present, ensure it's from SNS (not a random request)
+  // If Type is present, ensure it's an SNS type
   if (body.Type && body.Type !== "Notification" && body.Type !== "SubscriptionConfirmation") return false;
-  // If TopicArn is present, ensure it's from AWS
+  // If TopicArn is present, ensure it's an AWS ARN (arn:aws:sns:...)
   const topicArn = body.TopicArn as string | undefined;
-  if (topicArn && !topicArn.includes("amazonaws.com")) return false;
+  if (topicArn && !topicArn.startsWith("arn:aws")) return false;
   return true;
 }
 

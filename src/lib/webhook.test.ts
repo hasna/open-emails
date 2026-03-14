@@ -288,3 +288,64 @@ describe("parseSesWebhook", () => {
     expect(event!.recipient).toBeUndefined();
   });
 });
+
+// ─── verifyResendSignature ────────────────────────────────────────────────────
+
+describe("verifyResendSignature", () => {
+  it("returns false when svix headers are missing", async () => {
+    const { verifyResendSignature } = await import("./webhook.js");
+    const result = await verifyResendSignature('{"type":"test"}', {}, "whsec_test");
+    expect(result).toBe(false);
+  });
+
+  it("returns false when timestamp is too old (> 5 min)", async () => {
+    const { verifyResendSignature } = await import("./webhook.js");
+    const oldTs = Math.floor(Date.now() / 1000) - 400; // 400s ago
+    const result = await verifyResendSignature('{}', {
+      "svix-id": "msg_123",
+      "svix-timestamp": String(oldTs),
+      "svix-signature": "v1,fakesig",
+    }, "whsec_dGVzdA==");
+    expect(result).toBe(false);
+  });
+
+  it("returns false with wrong secret", async () => {
+    const { verifyResendSignature } = await import("./webhook.js");
+    const ts = Math.floor(Date.now() / 1000);
+    const result = await verifyResendSignature('{}', {
+      "svix-id": "msg_123",
+      "svix-timestamp": String(ts),
+      "svix-signature": "v1,wrongsignature==",
+    }, "whsec_dGVzdA==");
+    expect(result).toBe(false);
+  });
+});
+
+// ─── verifySnsStructure ───────────────────────────────────────────────────────
+
+describe("verifySnsStructure", () => {
+  it("returns true for valid SNS Notification", async () => {
+    const { verifySnsStructure } = await import("./webhook.js");
+    // Use dynamic require to avoid circular import issues
+    const result = verifySnsStructure({ Type: "Notification", TopicArn: "arn:aws:sns:us-east-1:123:topic" });
+    expect(result).toBe(true);
+  });
+
+  it("returns true for payload without Type (direct SES format)", async () => {
+    const { verifySnsStructure } = await import("./webhook.js");
+    const result = verifySnsStructure({ notificationType: "Delivery", mail: {} });
+    expect(result).toBe(true);
+  });
+
+  it("returns false when TopicArn is not from amazonaws.com", async () => {
+    const { verifySnsStructure } = await import("./webhook.js");
+    const result = verifySnsStructure({ Type: "Notification", TopicArn: "arn:evil:attacker:topic" });
+    expect(result).toBe(false);
+  });
+
+  it("returns false for invalid Type", async () => {
+    const { verifySnsStructure } = await import("./webhook.js");
+    const result = verifySnsStructure({ Type: "RandomUnknownType" });
+    expect(result).toBe(false);
+  });
+});
