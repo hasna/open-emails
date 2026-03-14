@@ -197,9 +197,17 @@ export class SESAdapter implements ProviderAdapter {
     const ccArr = opts.cc ? (Array.isArray(opts.cc) ? opts.cc : [opts.cc]) : [];
     const bccArr = opts.bcc ? (Array.isArray(opts.bcc) ? opts.bcc : [opts.bcc]) : [];
 
-    if (opts.attachments && opts.attachments.length > 0) {
-      // Build raw MIME message for attachments
-      const rawMessage = buildRawMime(opts);
+    // Build extra headers (List-Unsubscribe, custom headers)
+    const extraHeaders: Record<string, string> = { ...(opts.headers ?? {}) };
+    if (opts.unsubscribe_url) {
+      extraHeaders["List-Unsubscribe"] = `<${opts.unsubscribe_url}>`;
+      extraHeaders["List-Unsubscribe-Post"] = "List-Unsubscribe=One-Click";
+    }
+    const hasCustomHeaders = Object.keys(extraHeaders).length > 0;
+
+    if (opts.attachments && opts.attachments.length > 0 || hasCustomHeaders) {
+      // Build raw MIME message for attachments or custom headers
+      const rawMessage = buildRawMime({ ...opts, headers: { ...opts.headers, ...extraHeaders } });
       const result = await this.client.send(
         new SendEmailCommand({
           FromEmailAddress: opts.from,
@@ -321,6 +329,7 @@ function buildRawMime(opts: SendEmailOptions): string {
     `To: ${toArr.join(", ")}`,
     `Subject: ${opts.subject}`,
     `MIME-Version: 1.0`,
+    ...(opts.headers ? Object.entries(opts.headers).map(([k, v]) => `${k}: ${v}`) : []),
     `Content-Type: multipart/mixed; boundary="${boundary}"`,
     "",
     `--${boundary}`,

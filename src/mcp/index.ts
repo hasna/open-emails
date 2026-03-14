@@ -449,6 +449,8 @@ server.tool(
       .optional()
       .describe("Email attachments"),
     tags: z.record(z.string()).optional().describe("Key-value tags"),
+    headers: z.record(z.string()).optional().describe("Custom email headers"),
+    unsubscribe_url: z.string().optional().describe("Auto-inject List-Unsubscribe headers (RFC 8058 one-click)"),
   },
   async (input) => {
     try {

@@ -129,6 +129,8 @@ export interface SendEmailOptions {
   text?: string;
   attachments?: Attachment[];
   tags?: Record<string, string>;
+  headers?: Record<string, string>;
+  unsubscribe_url?: string;  // Auto-injects List-Unsubscribe + List-Unsubscribe-Post headers (RFC 8058)
 }
 
 // Email log

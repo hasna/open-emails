@@ -144,6 +144,16 @@ export class ResendAdapter implements ProviderAdapter {
       payload.tags = Object.entries(opts.tags).map(([name, value]) => ({ name, value }));
     }
 
+    // Build custom headers (List-Unsubscribe, etc.)
+    const extraHeaders: Record<string, string> = { ...(opts.headers ?? {}) };
+    if (opts.unsubscribe_url) {
+      extraHeaders["List-Unsubscribe"] = `<${opts.unsubscribe_url}>`;
+      extraHeaders["List-Unsubscribe-Post"] = "List-Unsubscribe=One-Click";
+    }
+    if (Object.keys(extraHeaders).length > 0) {
+      (payload as unknown as Record<string, unknown>).headers = extraHeaders;
+    }
+
     const result = await this.client.emails.send(payload);
     if (result.error) {
       throw new Error(`Resend send failed: ${result.error.message}`);

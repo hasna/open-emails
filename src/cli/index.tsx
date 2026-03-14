@@ -613,6 +613,7 @@ program
   .option("--vars <json>", "Template variables as JSON string")
   .option("--force", "Send even if recipients are suppressed")
   .option("--schedule <datetime>", "Schedule email for later (ISO 8601 datetime)")
+  .option("--unsubscribe-url <url>", "Inject List-Unsubscribe headers (RFC 8058 one-click)")
   .action(async (opts: {
     from: string;
     to?: string[];
@@ -764,6 +765,7 @@ program
         text: textBody,
         html: htmlBody,
         attachments: attachments.length > 0 ? attachments : undefined,
+        unsubscribe_url: (opts as Record<string, unknown>).unsubscribeUrl as string | undefined,
       };
 
       const adapter = getAdapter(provider!);
