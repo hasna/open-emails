@@ -1,6 +1,8 @@
 import type { Command } from "commander";
 import chalk from "chalk";
 import { execSync } from "node:child_process";
+import { existsSync, readFileSync, writeFileSync } from "node:fs";
+import { join } from "node:path";
 import { handleError } from "../utils.js";
 
 export function registerServeCommands(program: Command, _output: (data: unknown, formatted: string) => void): void {
@@ -83,5 +85,68 @@ export function registerServeCommands(program: Command, _output: (data: unknown,
       }
 
       program.help();
+    });
+
+  // ─── REMOVE ───────────────────────────────────────────────────────────────────
+  program
+    .command("remove")
+    .alias("uninstall")
+    .description("Uninstall the emails MCP from agent configs")
+    .option("--claude", "Remove from Claude Code")
+    .option("--codex", "Remove from Codex CLI (~/.codex/config.toml)")
+    .option("--gemini", "Remove from Gemini CLI (~/.gemini/settings.json)")
+    .option("--all", "Remove from all agent configs")
+    .action((opts: { claude?: boolean; codex?: boolean; gemini?: boolean; all?: boolean }) => {
+      const doAll = opts.all || (!opts.claude && !opts.codex && !opts.gemini);
+      const HOME = process.env["HOME"] || process.env["USERPROFILE"] || "~";
+
+      if (doAll || opts.claude) {
+        try {
+          execSync("claude mcp remove emails", { stdio: "pipe" });
+          console.log(chalk.green("✓ Removed from Claude Code"));
+        } catch {
+          console.log(chalk.yellow("⚠ Could not auto-remove from Claude Code. Run manually:"));
+          console.log(chalk.dim("  claude mcp remove emails"));
+        }
+      }
+
+      if (doAll || opts.codex) {
+        try {
+          const configPath = join(HOME, ".codex", "config.toml");
+          if (!existsSync(configPath)) {
+            console.log(chalk.dim("Codex CLI config not found, skipping"));
+          } else {
+            const lines = readFileSync(configPath, "utf-8").split("\n");
+            const result: string[] = [];
+            let skipping = false;
+            for (const line of lines) {
+              if (line.trim() === "[mcp_servers.emails]") { skipping = true; continue; }
+              if (skipping && line.startsWith("[")) skipping = false;
+              if (!skipping) result.push(line);
+            }
+            writeFileSync(configPath, result.join("\n").trimEnd() + "\n");
+            console.log(chalk.green("✓ Removed from Codex CLI config"));
+          }
+        } catch (e) { handleError(e); }
+      }
+
+      if (doAll || opts.gemini) {
+        try {
+          const configPath = join(HOME, ".gemini", "settings.json");
+          if (!existsSync(configPath)) {
+            console.log(chalk.dim("Gemini CLI config not found, skipping"));
+          } else {
+            const config = JSON.parse(readFileSync(configPath, "utf-8")) as Record<string, unknown>;
+            const mcpServers = config["mcpServers"] as Record<string, unknown> | undefined;
+            if (mcpServers?.["emails"]) {
+              delete mcpServers["emails"];
+              writeFileSync(configPath, JSON.stringify(config, null, 2) + "\n");
+              console.log(chalk.green("✓ Removed from Gemini CLI config"));
+            } else {
+              console.log(chalk.dim("emails not found in Gemini CLI config, skipping"));
+            }
+          }
+        } catch (e) { handleError(e); }
+      }
     });
 }
