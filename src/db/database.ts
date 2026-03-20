@@ -370,6 +370,21 @@ const MIGRATIONS = [
   CREATE INDEX IF NOT EXISTS idx_inbound_reply_to ON inbound_emails(in_reply_to_email_id);
   INSERT OR IGNORE INTO _migrations (id) VALUES (14);
   `,
+
+  // Migration 15: Gmail sync state + dedup index on inbound_emails(provider_id, message_id)
+  `
+  CREATE TABLE IF NOT EXISTS gmail_sync_state (
+    provider_id TEXT PRIMARY KEY REFERENCES providers(id) ON DELETE CASCADE,
+    last_synced_at TEXT,
+    last_message_id TEXT,
+    history_id TEXT,
+    next_page_token TEXT,
+    updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+  );
+  CREATE UNIQUE INDEX IF NOT EXISTS idx_inbound_provider_message ON inbound_emails(provider_id, message_id)
+    WHERE provider_id IS NOT NULL AND message_id IS NOT NULL;
+  INSERT OR IGNORE INTO _migrations (id) VALUES (15);
+  `,
 ];
 
 let _db: Database | null = null;
@@ -625,6 +640,20 @@ function ensureSchema(db: Database): void {
   )`);
   ensureIndex("CREATE INDEX IF NOT EXISTS idx_warming_domain ON warming_schedules(domain)");
   ensureIndex("CREATE INDEX IF NOT EXISTS idx_warming_status ON warming_schedules(status)");
+
+  // Gmail sync state
+  ensureTable(`CREATE TABLE IF NOT EXISTS gmail_sync_state (
+    provider_id TEXT PRIMARY KEY REFERENCES providers(id) ON DELETE CASCADE,
+    last_synced_at TEXT,
+    last_message_id TEXT,
+    history_id TEXT,
+    next_page_token TEXT,
+    updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+  )`);
+
+  // Dedup index on inbound_emails for Gmail sync
+  ensureIndex(`CREATE UNIQUE INDEX IF NOT EXISTS idx_inbound_provider_message ON inbound_emails(provider_id, message_id)
+    WHERE provider_id IS NOT NULL AND message_id IS NOT NULL`);
 }
 
 export function closeDatabase(): void {

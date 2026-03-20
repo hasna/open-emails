@@ -1,6 +1,9 @@
 import type { Command } from "commander";
 import chalk from "chalk";
+import { existsSync, readdirSync, readFileSync } from "node:fs";
+import { join } from "node:path";
 import { createProvider, listProviders, deleteProvider, getProvider, updateProvider } from "../../db/providers.js";
+import { createAddress } from "../../db/addresses.js";
 import { getAdapter } from "../../providers/index.js";
 import { checkAllProviders, formatProviderHealth } from "../../lib/health.js";
 import { log } from "../../lib/logger.js";
@@ -251,6 +254,89 @@ export function registerProviderCommands(program: Command, output: (data: unknow
           lines.push("");
         }
         output(results, lines.join("\n"));
+      } catch (e) {
+        handleError(e);
+      }
+    });
+
+  // ─── ADD-GMAIL ────────────────────────────────────────────────────────────
+  providerCmd
+    .command("add-gmail")
+    .description("Add a Gmail provider from saved connector tokens")
+    .option("--name <name>", "Provider name (defaults to Gmail profile name)")
+    .option("--profile <profile>", "connect-gmail profile to use", "default")
+    .option("--list-profiles", "List available connect-gmail profiles and exit")
+    .action(async (opts: { name?: string; profile?: string; listProfiles?: boolean }) => {
+      try {
+        const HOME = process.env["HOME"] || process.env["USERPROFILE"] || "~";
+        const profilesDir = join(HOME, ".connect", "connect-gmail", "profiles");
+
+        if (opts.listProfiles) {
+          if (!existsSync(profilesDir)) {
+            console.log(chalk.dim("No Gmail profiles found. Run: connect-gmail auth login"));
+            return;
+          }
+          const profiles = readdirSync(profilesDir).filter(
+            (p) => existsSync(join(profilesDir, p, "tokens.json")),
+          );
+          console.log(chalk.bold("\nAvailable Gmail profiles:"));
+          for (const p of profiles) console.log(`  ${chalk.cyan(p)}`);
+          console.log();
+          return;
+        }
+
+        const profile = opts.profile ?? "default";
+        const tokensPath = join(profilesDir, profile, "tokens.json");
+
+        if (!existsSync(tokensPath)) {
+          console.error(chalk.red(`No tokens found for profile "${profile}" at ${tokensPath}`));
+          console.error(chalk.dim("Run: connect-gmail auth login"));
+          process.exit(1);
+        }
+
+        const tokens = JSON.parse(readFileSync(tokensPath, "utf-8")) as {
+          accessToken?: string;
+          refreshToken?: string;
+          expiresAt?: string;
+        };
+
+        if (!tokens.refreshToken) {
+          console.error(chalk.red("Tokens file missing refreshToken. Re-authenticate with: connect-gmail auth login"));
+          process.exit(1);
+        }
+
+        // Get Gmail profile info to use as the email address
+        const { runConnectorCommand } = await import("@hasna/connectors");
+        const meResult = await runConnectorCommand("gmail", ["me"]);
+        let emailAddress = "";
+        if (meResult.success) {
+          const match = meResult.stdout.match(/emailAddress:\s*(\S+)/);
+          if (match?.[1]) emailAddress = match[1];
+        }
+
+        const providerName = opts.name ?? (emailAddress ? `Gmail (${emailAddress})` : `Gmail (${profile})`);
+
+        // Create provider
+        const expiryMs = tokens.expiresAt ? parseInt(tokens.expiresAt, 10) : undefined;
+        const expiry = expiryMs ? new Date(expiryMs).toISOString() : undefined;
+
+        const provider = createProvider({
+          name: providerName,
+          type: "gmail",
+          oauth_access_token: tokens.accessToken,
+          oauth_refresh_token: tokens.refreshToken,
+          oauth_token_expiry: expiry,
+        });
+
+        console.log(chalk.green(`✓ Created provider: ${providerName} [${provider.id.slice(0, 8)}]`));
+
+        // Create address record if we have the email
+        if (emailAddress) {
+          createAddress({ provider_id: provider.id, email: emailAddress });
+          console.log(chalk.green(`✓ Added address: ${emailAddress}`));
+        }
+
+        console.log(chalk.dim(`\nRun sync: emails inbox sync --provider ${provider.id.slice(0, 8)}`));
       } catch (e) {
         handleError(e);
       }

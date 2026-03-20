@@ -18,6 +18,8 @@ import {
 import { storeEmailContent, getEmailContent } from "../db/email-content.js";
 import { listSandboxEmails, getSandboxEmail, clearSandboxEmails } from "../db/sandbox.js";
 import { listInboundEmails, getInboundEmail, clearInboundEmails, listReplies, getReplyCount } from "../db/inbound.js";
+import { syncGmailInbox, syncGmailInboxAll } from "../lib/gmail-sync.js";
+import { getGmailSyncState, updateLastSynced } from "../db/gmail-sync-state.js";
 import { getDatabase, resolvePartialId } from "../db/database.js";
 import { getAdapter } from "../providers/index.js";
 import { getLocalStats } from "../lib/stats.js";
@@ -1175,6 +1177,108 @@ server.tool(
     try {
       const count = clearInboundEmails(provider_id);
       return { content: [{ type: "text", text: `Cleared ${count} inbound email(s)` }] };
+    } catch (e) {
+      return { content: [{ type: "text", text: `Error: ${formatError(e)}` }], isError: true };
+    }
+  },
+);
+
+// ─── GMAIL INBOX SYNC ─────────────────────────────────────────────────────────
+
+server.tool(
+  "sync_inbox",
+  "Sync Gmail inbox messages into local SQLite. Fetches new messages via the Gmail connector and stores them for offline access.",
+  {
+    provider_id: z.string().describe("Gmail provider ID to sync"),
+    label: z.string().optional().describe("Gmail label to sync (default: INBOX)"),
+    query: z.string().optional().describe("Gmail search query, e.g. 'is:unread from:someone@example.com'"),
+    limit: z.number().optional().describe("Max messages per run (default: 50)"),
+    since: z.string().optional().describe("Only sync messages after this ISO date"),
+    all_pages: z.boolean().optional().describe("Sync all pages until done (for full backfill)"),
+  },
+  async ({ provider_id, label, query, limit, since, all_pages }) => {
+    try {
+      const db = getDatabase();
+      const opts = {
+        providerId: provider_id,
+        labelFilter: label,
+        query,
+        batchSize: limit,
+        since,
+        db,
+      };
+      const result = all_pages
+        ? await syncGmailInboxAll(opts)
+        : await syncGmailInbox(opts);
+
+      updateLastSynced(provider_id, undefined, db);
+
+      return {
+        content: [{
+          type: "text",
+          text: JSON.stringify({
+            synced: result.synced,
+            skipped: result.skipped,
+            errors: result.errors,
+            done: result.done,
+            nextPageToken: result.nextPageToken,
+          }, null, 2),
+        }],
+      };
+    } catch (e) {
+      return { content: [{ type: "text", text: `Error: ${formatError(e)}` }], isError: true };
+    }
+  },
+);
+
+server.tool(
+  "search_inbound",
+  "Search synced inbound emails in local SQLite by subject, sender, or body text",
+  {
+    query: z.string().describe("Search term to match against subject, from address, or body"),
+    provider_id: z.string().optional().describe("Filter by provider ID"),
+    limit: z.number().optional().describe("Max results (default: 20)"),
+  },
+  async ({ query, provider_id, limit }) => {
+    try {
+      const db = getDatabase();
+      const maxResults = limit ?? 20;
+      const q = query.toLowerCase();
+      const emails = listInboundEmails({ provider_id, limit: maxResults * 4 }, db)
+        .filter(
+          (e) =>
+            e.subject.toLowerCase().includes(q) ||
+            e.from_address.toLowerCase().includes(q) ||
+            (e.text_body ?? "").toLowerCase().includes(q),
+        )
+        .slice(0, maxResults);
+      return { content: [{ type: "text", text: JSON.stringify(emails, null, 2) }] };
+    } catch (e) {
+      return { content: [{ type: "text", text: `Error: ${formatError(e)}` }], isError: true };
+    }
+  },
+);
+
+server.tool(
+  "get_inbox_sync_status",
+  "Get Gmail sync status for all Gmail providers — last synced time, message counts",
+  {},
+  async () => {
+    try {
+      const db = getDatabase();
+      const providers = listProviders(db).filter((p) => p.type === "gmail");
+      const status = providers.map((p) => {
+        const state = getGmailSyncState(p.id, db);
+        const count = db.query("SELECT COUNT(*) as c FROM inbound_emails WHERE provider_id = ?").get(p.id) as { c: number } | null;
+        return {
+          provider_id: p.id,
+          provider_name: p.name,
+          synced_count: count?.c ?? 0,
+          last_synced_at: state?.last_synced_at ?? null,
+          last_message_id: state?.last_message_id ?? null,
+        };
+      });
+      return { content: [{ type: "text", text: JSON.stringify(status, null, 2) }] };
     } catch (e) {
       return { content: [{ type: "text", text: `Error: ${formatError(e)}` }], isError: true };
     }
