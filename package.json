@@ -1,6 +1,6 @@
 {
   "name": "@hasna/emails",
-  "version": "0.5.0",
+  "version": "0.5.1",
   "description": "Email management CLI + MCP server + dashboard for Resend and AWS SES",
   "type": "module",
   "bin": {
@@ -29,6 +29,7 @@
     "dev:serve": "bun run src/server/index.ts"
   },
   "publishConfig": {
+    "registry": "https://registry.npmjs.org",
     "access": "public"
   },
   "engines": {
