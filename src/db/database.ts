@@ -385,6 +385,31 @@ const MIGRATIONS = [
     WHERE provider_id IS NOT NULL AND message_id IS NOT NULL;
   INSERT OR IGNORE INTO _migrations (id) VALUES (15);
   `,
+
+  // Migration 16: AI triage table — stores classification, priority, summary, sentiment, draft replies
+  `
+  CREATE TABLE IF NOT EXISTS email_triage (
+    id TEXT PRIMARY KEY,
+    email_id TEXT REFERENCES emails(id) ON DELETE CASCADE,
+    inbound_email_id TEXT REFERENCES inbound_emails(id) ON DELETE CASCADE,
+    label TEXT NOT NULL CHECK(label IN ('action-required','fyi','urgent','follow-up','spam','newsletter','transactional')),
+    priority INTEGER NOT NULL DEFAULT 3 CHECK(priority BETWEEN 1 AND 5),
+    summary TEXT,
+    sentiment TEXT CHECK(sentiment IN ('positive','negative','neutral')),
+    draft_reply TEXT,
+    confidence REAL DEFAULT 0.0,
+    model TEXT,
+    triaged_at TEXT NOT NULL DEFAULT (datetime('now')),
+    created_at TEXT NOT NULL DEFAULT (datetime('now'))
+  );
+  CREATE INDEX IF NOT EXISTS idx_triage_email ON email_triage(email_id);
+  CREATE INDEX IF NOT EXISTS idx_triage_inbound ON email_triage(inbound_email_id);
+  CREATE INDEX IF NOT EXISTS idx_triage_label ON email_triage(label);
+  CREATE INDEX IF NOT EXISTS idx_triage_priority ON email_triage(priority);
+  CREATE UNIQUE INDEX IF NOT EXISTS idx_triage_email_unique ON email_triage(email_id) WHERE email_id IS NOT NULL;
+  CREATE UNIQUE INDEX IF NOT EXISTS idx_triage_inbound_unique ON email_triage(inbound_email_id) WHERE inbound_email_id IS NOT NULL;
+  INSERT OR IGNORE INTO _migrations (id) VALUES (16);
+  `,
 ];
 
 let _db: Database | null = null;
@@ -654,6 +679,28 @@ function ensureSchema(db: Database): void {
   // Dedup index on inbound_emails for Gmail sync
   ensureIndex(`CREATE UNIQUE INDEX IF NOT EXISTS idx_inbound_provider_message ON inbound_emails(provider_id, message_id)
     WHERE provider_id IS NOT NULL AND message_id IS NOT NULL`);
+
+  // Ensure email_triage table exists
+  ensureTable(`CREATE TABLE IF NOT EXISTS email_triage (
+    id TEXT PRIMARY KEY,
+    email_id TEXT REFERENCES emails(id) ON DELETE CASCADE,
+    inbound_email_id TEXT REFERENCES inbound_emails(id) ON DELETE CASCADE,
+    label TEXT NOT NULL CHECK(label IN ('action-required','fyi','urgent','follow-up','spam','newsletter','transactional')),
+    priority INTEGER NOT NULL DEFAULT 3 CHECK(priority BETWEEN 1 AND 5),
+    summary TEXT,
+    sentiment TEXT CHECK(sentiment IN ('positive','negative','neutral')),
+    draft_reply TEXT,
+    confidence REAL DEFAULT 0.0,
+    model TEXT,
+    triaged_at TEXT NOT NULL DEFAULT (datetime('now')),
+    created_at TEXT NOT NULL DEFAULT (datetime('now'))
+  )`);
+  ensureIndex("CREATE INDEX IF NOT EXISTS idx_triage_email ON email_triage(email_id)");
+  ensureIndex("CREATE INDEX IF NOT EXISTS idx_triage_inbound ON email_triage(inbound_email_id)");
+  ensureIndex("CREATE INDEX IF NOT EXISTS idx_triage_label ON email_triage(label)");
+  ensureIndex("CREATE INDEX IF NOT EXISTS idx_triage_priority ON email_triage(priority)");
+  ensureIndex("CREATE UNIQUE INDEX IF NOT EXISTS idx_triage_email_unique ON email_triage(email_id) WHERE email_id IS NOT NULL");
+  ensureIndex("CREATE UNIQUE INDEX IF NOT EXISTS idx_triage_inbound_unique ON email_triage(inbound_email_id) WHERE inbound_email_id IS NOT NULL");
 }
 
 export function closeDatabase(): void {
