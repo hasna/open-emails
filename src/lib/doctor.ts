@@ -29,7 +29,8 @@ export async function runDiagnostics(db?: Database): Promise<DoctorCheck[]> {
   }
 
   // 2. Config file
-  const configPath = join(process.env.HOME || "~", ".emails", "config.json");
+  const { getDataDir } = await import("../db/database.js");
+  const configPath = join(getDataDir(), "config.json");
   checks.push(
     existsSync(configPath)
       ? { name: "Config", status: "pass", message: "Config file exists" }

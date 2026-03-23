@@ -1,8 +1,9 @@
 import { existsSync, readFileSync, writeFileSync, mkdirSync } from "fs";
 import { join } from "path";
+import { getDataDir } from "../db/database.js";
 
 // Lazy getters so tests can override HOME via process.env before calling
-function getConfigDir(): string { return join(process.env.HOME || "~", ".emails"); }
+function getConfigDir(): string { return getDataDir(); }
 function getConfigPath(): string { return join(getConfigDir(), "config.json"); }
 
 interface EmailsConfig {

@@ -6,7 +6,7 @@ import {
   getDefaultProviderId, getFailoverProviderIds,
 } from "./config.js";
 
-// Use a temp dir unique per test run to isolate from real ~/.emails
+// Use a temp dir unique per test run to isolate from real ~/.hasna/emails
 const TMP_HOME = join("/tmp", `emails-config-test-${process.pid}`);
 const origHome = process.env.HOME;
 
@@ -27,7 +27,7 @@ describe("config", () => {
 
   it("saveConfig creates the file and directory", () => {
     saveConfig({ "my-key": "my-value" });
-    expect(existsSync(join(TMP_HOME, ".emails", "config.json"))).toBe(true);
+    expect(existsSync(join(TMP_HOME, ".hasna", "emails", "config.json"))).toBe(true);
   });
 
   it("loadConfig reads back saved config", () => {

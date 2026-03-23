@@ -1,19 +1,42 @@
 import { Database } from "bun:sqlite";
-import { existsSync, mkdirSync } from "node:fs";
+import { copyFileSync, existsSync, mkdirSync, readdirSync, statSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 
 function isInMemoryDb(path: string): boolean {
   return path === ":memory:" || path.startsWith("file::memory:");
 }
 
+export function getDataDir(): string {
+  const home = process.env["HOME"] || process.env["USERPROFILE"] || "~";
+  const newDir = join(home, ".hasna", "emails");
+  const oldDir = join(home, ".emails");
+
+  // Auto-migrate old dir to new location
+  if (existsSync(oldDir) && !existsSync(newDir)) {
+    mkdirSync(newDir, { recursive: true });
+    for (const file of readdirSync(oldDir)) {
+      const oldPath = join(oldDir, file);
+      if (statSync(oldPath).isFile()) {
+        copyFileSync(oldPath, join(newDir, file));
+      }
+    }
+  }
+
+  mkdirSync(newDir, { recursive: true });
+  return newDir;
+}
+
 function getDbPath(): string {
-  // 1. Environment variable override (used for tests)
+  // 1. Environment variable override (new)
+  if (process.env["HASNA_EMAILS_DB_PATH"]) {
+    return process.env["HASNA_EMAILS_DB_PATH"];
+  }
+  // 2. Environment variable override (backward compat, used for tests)
   if (process.env["EMAILS_DB_PATH"]) {
     return process.env["EMAILS_DB_PATH"];
   }
-  // 2. Always at ~/.emails/emails.db (global user root)
-  const home = process.env["HOME"] || process.env["USERPROFILE"] || "~";
-  return join(home, ".emails", "emails.db");
+  // 3. Default: ~/.hasna/emails/emails.db
+  return join(getDataDir(), "emails.db");
 }
 
 function ensureDir(filePath: string): void {
