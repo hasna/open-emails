@@ -1,4 +1,4 @@
-import { Database } from "bun:sqlite";
+import { SqliteAdapter as Database } from "@hasna/cloud";
 import { copyFileSync, existsSync, mkdirSync, readdirSync, statSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 
@@ -724,6 +724,16 @@ function ensureSchema(db: Database): void {
   ensureIndex("CREATE INDEX IF NOT EXISTS idx_triage_priority ON email_triage(priority)");
   ensureIndex("CREATE UNIQUE INDEX IF NOT EXISTS idx_triage_email_unique ON email_triage(email_id) WHERE email_id IS NOT NULL");
   ensureIndex("CREATE UNIQUE INDEX IF NOT EXISTS idx_triage_inbound_unique ON email_triage(inbound_email_id) WHERE inbound_email_id IS NOT NULL");
+
+  ensureTable(`CREATE TABLE IF NOT EXISTS feedback (
+    id TEXT PRIMARY KEY DEFAULT (lower(hex(randomblob(16)))),
+    message TEXT NOT NULL,
+    email TEXT,
+    category TEXT DEFAULT 'general',
+    version TEXT,
+    machine_id TEXT,
+    created_at TEXT NOT NULL DEFAULT (datetime('now'))
+  )`);
 }
 
 export function closeDatabase(): void {

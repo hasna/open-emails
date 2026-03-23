@@ -1706,6 +1706,30 @@ server.tool(
   },
 );
 
+// ─── Feedback ────────────────────────────────────────────────────────────────
+
+server.tool(
+  "send_feedback",
+  "Send feedback about this service",
+  {
+    message: z.string(),
+    email: z.string().optional(),
+    category: z.enum(["bug", "feature", "general"]).optional(),
+  },
+  async (params) => {
+    try {
+      const db = getDatabase();
+      const pkg = require("../../package.json");
+      db.run("INSERT INTO feedback (message, email, category, version) VALUES (?, ?, ?, ?)", [
+        params.message, params.email || null, params.category || "general", pkg.version,
+      ]);
+      return { content: [{ type: "text" as const, text: "Feedback saved. Thank you!" }] };
+    } catch (e) {
+      return { content: [{ type: "text" as const, text: String(e) }], isError: true };
+    }
+  },
+);
+
 // ─── Start ────────────────────────────────────────────────────────────────────
 
 async function main() {
