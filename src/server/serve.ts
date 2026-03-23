@@ -972,6 +972,86 @@ export async function startServer(port = 3900, hostname = "127.0.0.1"): Promise<
 
       // ─── TRACKING ────────────────────────────────────────────────────────
 
+      // ─── TRIAGE (AI) ──────────────────────────────────────────────────────
+
+      // GET /api/triage/stats
+      if (path === "/api/triage/stats" && method === "GET") {
+        try {
+          const { getTriageStats } = await import("../db/triage.js");
+          return json(getTriageStats());
+        } catch (e) { return internalError(e); }
+      }
+
+      // POST /api/triage/batch
+      if (path === "/api/triage/batch" && method === "POST") {
+        try {
+          const { triageBatch } = await import("../lib/triage.js");
+          const body = await req.json() as { type?: string; limit?: number; model?: string; skip_draft?: boolean };
+          const type = (body.type === "sent" ? "sent" : "inbound") as "sent" | "inbound";
+          const result = await triageBatch(type, body.limit || 10, { model: body.model, skip_draft: body.skip_draft });
+          return json(result);
+        } catch (e) { return internalError(e); }
+      }
+
+      // POST /api/triage/:id/draft
+      const triageDraftMatch = path.match(/^\/api\/triage\/([^/]+)\/draft$/);
+      if (triageDraftMatch && method === "POST") {
+        try {
+          const { generateDraftForEmail } = await import("../lib/triage.js");
+          const body = await req.json() as { type?: string; model?: string };
+          const type = (body.type === "inbound" ? "inbound" : "sent") as "sent" | "inbound";
+          const draft = await generateDraftForEmail(triageDraftMatch[1]!, type, { model: body.model });
+          return json({ draft });
+        } catch (e) { return internalError(e); }
+      }
+
+      // /api/triage/:id — GET, POST, DELETE
+      const triageIdMatch = path.match(/^\/api\/triage\/([^/]+)$/);
+      if (triageIdMatch && triageIdMatch[1] !== "batch" && triageIdMatch[1] !== "stats") {
+        const triageTargetId = triageIdMatch[1]!;
+
+        if (method === "GET") {
+          try {
+            const { getTriage, getTriageById } = await import("../db/triage.js");
+            const typeParam = url.searchParams.get("type") || "sent";
+            let result = getTriageById(triageTargetId);
+            if (!result) result = getTriage(triageTargetId, typeParam as "sent" | "inbound");
+            if (!result) return notFound("No triage result found");
+            return json(result);
+          } catch (e) { return internalError(e); }
+        }
+
+        if (method === "POST") {
+          try {
+            const { triageEmail } = await import("../lib/triage.js");
+            const body = await req.json() as { type?: string; model?: string; skip_draft?: boolean };
+            const type = (body.type === "inbound" ? "inbound" : "sent") as "sent" | "inbound";
+            const result = await triageEmail(triageTargetId, type, { model: body.model, skip_draft: body.skip_draft });
+            return json(result);
+          } catch (e) { return internalError(e); }
+        }
+
+        if (method === "DELETE") {
+          try {
+            const { deleteTriage } = await import("../db/triage.js");
+            const deleted = deleteTriage(triageTargetId);
+            return json({ deleted });
+          } catch (e) { return internalError(e); }
+        }
+      }
+
+      // GET /api/triage — list triaged emails
+      if (path === "/api/triage" && method === "GET") {
+        try {
+          const { listTriaged } = await import("../db/triage.js");
+          const label = url.searchParams.get("label") || undefined;
+          const priority = url.searchParams.get("priority") ? Number(url.searchParams.get("priority")) : undefined;
+          const sentiment = url.searchParams.get("sentiment") || undefined;
+          const limit = url.searchParams.get("limit") ? Number(url.searchParams.get("limit")) : 20;
+          return json(listTriaged({ label: label as any, priority, sentiment: sentiment as any, limit }));
+        } catch (e) { return internalError(e); }
+      }
+
       // GET /track/open/:emailId — record open event, return 1x1 transparent GIF
       const trackOpenMatch = path.match(/^\/track\/open\/([^/]+)$/);
       if (trackOpenMatch && method === "GET") {

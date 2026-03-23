@@ -20,6 +20,7 @@ import { registerSandboxCommands } from "./commands/sandbox.js";
 import { registerInboundCommands } from "./commands/inbound.js";
 import { registerMiscCommands } from "./commands/misc.js";
 import { registerInboxCommands } from "./commands/inbox.js";
+import { registerTriageCommands } from "./commands/triage.js";
 
 function getPackageVersion(): string {
   try {
@@ -68,5 +69,6 @@ registerSandboxCommands(program, output);
 registerInboundCommands(program, output);
 registerMiscCommands(program, output);
 registerInboxCommands(program, output);
+registerTriageCommands(program, output);
 
 program.parse(process.argv);

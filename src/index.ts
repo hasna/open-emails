@@ -146,6 +146,21 @@ export {
 export { generateWarmingPlan, getTodayLimit, getTodaySentCount, formatWarmingStatus } from "./lib/warming.js";
 export type { WarmingSchedule, WarmingDay } from "./lib/warming.js";
 
+// Triage (AI)
+export {
+  saveTriage, getTriage, getTriageById, listTriaged,
+  getUntriaged, deleteTriage, deleteTriageByEmail,
+  getTriageStats, clearTriage,
+} from "./db/triage.js";
+export type { TriageResult, TriageLabel, TriageSentiment, SaveTriageInput, TriageFilter, TriageStats } from "./db/triage.js";
+export {
+  classifyEmail, scorePriority, summarizeEmail, analyzeSentiment,
+  generateDraftReply, triageEmail, triageBatch, generateDraftForEmail,
+} from "./lib/triage.js";
+export type { ClassifyResult, TriageOptions } from "./lib/triage.js";
+export { chatCompletion, prompt, promptJson, CerebrasError } from "./lib/cerebras.js";
+export type { CerebrasMessage, CerebrasCompletionOptions, CerebrasResponse } from "./lib/cerebras.js";
+
 // Provider factory
 export { getAdapter } from "./providers/index.js";
 export type { ProviderAdapter, RemoteDomain, RemoteAddress, RemoteEvent } from "./providers/interface.js";

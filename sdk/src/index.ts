@@ -172,6 +172,30 @@ export interface DoctorCheck {
   message: string;
 }
 
+export interface TriageResult {
+  id: string;
+  email_id: string | null;
+  inbound_email_id: string | null;
+  label: string;
+  priority: number;
+  summary: string | null;
+  sentiment: string | null;
+  draft_reply: string | null;
+  confidence: number;
+  model: string | null;
+  triaged_at: string;
+  created_at: string;
+}
+
+export interface TriageStats {
+  total: number;
+  by_label: Record<string, number>;
+  by_priority: Record<number, number>;
+  by_sentiment: Record<string, number>;
+  avg_priority: number;
+  avg_confidence: number;
+}
+
 export interface EmailsClientOptions {
   /** Base URL of the emails server, e.g. "http://localhost:3900" */
   serverUrl: string;
@@ -535,5 +559,57 @@ export class EmailsClient {
 
   async runDoctor(): Promise<DoctorCheck[]> {
     return this.request("/api/doctor");
+  }
+
+  // ── Triage (AI) ──
+
+  async triageEmail(
+    emailId: string,
+    opts?: { type?: "sent" | "inbound"; model?: string; skip_draft?: boolean }
+  ): Promise<TriageResult> {
+    return this.request(`/api/triage/${emailId}`, {
+      method: "POST",
+      body: JSON.stringify({ type: opts?.type, model: opts?.model, skip_draft: opts?.skip_draft }),
+    });
+  }
+
+  async triageBatch(
+    opts?: { type?: "sent" | "inbound"; limit?: number; model?: string; skip_draft?: boolean }
+  ): Promise<{ triaged: TriageResult[]; errors: { id: string; error: string }[] }> {
+    return this.request("/api/triage/batch", {
+      method: "POST",
+      body: JSON.stringify(opts || {}),
+    });
+  }
+
+  async getTriage(
+    emailId: string,
+    type?: "sent" | "inbound"
+  ): Promise<TriageResult> {
+    return this.request(`/api/triage/${emailId}${qs({ type })}`);
+  }
+
+  async listTriaged(
+    params?: { label?: string; priority?: number; sentiment?: string; limit?: number }
+  ): Promise<TriageResult[]> {
+    return this.request(`/api/triage${qs(params || {})}`);
+  }
+
+  async getTriageStats(): Promise<TriageStats> {
+    return this.request("/api/triage/stats");
+  }
+
+  async generateDraftReply(
+    emailId: string,
+    opts?: { type?: "sent" | "inbound"; model?: string }
+  ): Promise<{ draft: string }> {
+    return this.request(`/api/triage/${emailId}/draft`, {
+      method: "POST",
+      body: JSON.stringify(opts || {}),
+    });
+  }
+
+  async deleteTriage(triageId: string): Promise<{ deleted: boolean }> {
+    return this.request(`/api/triage/${triageId}`, { method: "DELETE" });
   }
 }
