@@ -1,6 +1,7 @@
 #!/usr/bin/env bun
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
+import { registerCloudTools } from "@hasna/cloud";
 import { z } from "zod";
 import { createProvider, listProviders, deleteProvider, getProvider, getActiveProvider, updateProvider } from "../db/providers.js";
 import { createDomain, listDomains, deleteDomain, getDomain, updateDnsStatus } from "../db/domains.js";
@@ -1775,6 +1776,7 @@ server.tool("list_agents", "List all registered agents.", {}, async () => {
 
 async function main() {
   const transport = new StdioServerTransport();
+  registerCloudTools(server, "emails");
   await server.connect(transport);
 }
 
