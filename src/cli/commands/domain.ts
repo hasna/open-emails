@@ -225,6 +225,72 @@ export function registerDomainCommands(program: Command, output: (data: unknown,
   // ─── WARMING COMMANDS ──────────────────────────────────────────────────────
 
   domainCmd
+    .command("setup-cloudflare <domain>")
+    .description("Auto-create DNS records in Cloudflare for email sending (DKIM, SPF, DMARC)")
+    .requiredOption("--provider <id>", "SES or Resend provider ID")
+    .option("--cloudflare-token <token>", "Cloudflare API token (falls back to config/env)")
+    .option("--mx", "Also add MX record for receiving email")
+    .option("--mx-server <host>", "Custom MX server hostname")
+    .option("--register-ses", "Register the domain with SES first if not already added")
+    .action(async (domain: string, opts: {
+      provider: string;
+      cloudflareToken?: string;
+      mx?: boolean;
+      mxServer?: string;
+      registerSes?: boolean;
+    }) => {
+      try {
+        const providerId = resolveId("providers", opts.provider);
+        const provider = getProvider(providerId);
+        if (!provider) handleError(new Error(`Provider not found: ${opts.provider}`));
+
+        // Optionally register with SES first
+        if (opts.registerSes) {
+          console.log(chalk.dim(`Registering ${domain} with ${provider!.type.toUpperCase()}...`));
+          const adapter = getAdapter(provider!);
+          await adapter.addDomain(domain);
+          const { createDomain } = await import("../../db/domains.js");
+          createDomain(providerId, domain);
+          console.log(chalk.green(`  ✓ Domain registered with ${provider!.type.toUpperCase()}`));
+        }
+
+        const { setupEmailDns } = await import("../../lib/cloudflare-dns.js");
+
+        console.log(chalk.dim(`Setting up DNS records in Cloudflare for ${domain}...`));
+        const result = await setupEmailDns({
+          domain,
+          provider: provider!,
+          apiToken: opts.cloudflareToken,
+          addMx: opts.mx,
+          mxServer: opts.mxServer,
+        });
+
+        console.log(chalk.bold(`\nCloudflare DNS setup for ${domain}:`));
+        console.log(chalk.dim(`  Zone: ${result.zone_name} (${result.zone_id})\n`));
+
+        for (const r of result.records) {
+          const icon = r.status === "created" ? chalk.green("✓")
+            : r.status === "skipped" ? chalk.dim("–")
+            : chalk.red("✗");
+          const label = r.status === "skipped" ? chalk.dim("already exists") : "";
+          const err = r.error ? chalk.red(` (${r.error})`) : "";
+          console.log(`  ${icon} ${r.type.padEnd(6)} ${r.name}${label}${err}`);
+        }
+
+        console.log(`\n  Created: ${chalk.green(String(result.created))}  Skipped: ${chalk.dim(String(result.skipped))}${result.failed > 0 ? `  Failed: ${chalk.red(String(result.failed))}` : ""}`);
+
+        if (result.created > 0) {
+          console.log(chalk.dim(`\n  DNS changes may take a few minutes to propagate.`));
+          console.log(chalk.dim(`  Verify with: emails domain verify ${domain} --provider ${opts.provider}`));
+        }
+        console.log();
+        output(result, "");
+      } catch (e) {
+        handleError(e);
+      }
+    });
+
+  domainCmd
     .command("warm <domain>")
     .description("Start a warming schedule for a domain")
     .requiredOption("--target <n>", "Target daily send volume", parseInt)

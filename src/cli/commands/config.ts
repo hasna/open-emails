@@ -10,6 +10,7 @@ const KNOWN_KEYS: { key: string; description: string; example: string }[] = [
   { key: "gmail_s3_bucket", description: "S3 bucket name for attachment storage (requires gmail_attachment_storage=s3)", example: "my-email-archive" },
   { key: "gmail_s3_prefix", description: "S3 key prefix for attachments (default: emails)", example: "emails" },
   { key: "gmail_s3_region", description: "AWS region for S3 uploads (default: us-east-1)", example: "us-east-1" },
+  { key: "cloudflare_api_token", description: "Cloudflare API token for auto DNS setup (also reads CLOUDFLARE_API_TOKEN env var)", example: "abc123..." },
 ];
 
 export function registerConfigCommands(program: Command, output: (data: unknown, formatted: string) => void): void {

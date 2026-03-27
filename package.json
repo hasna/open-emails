@@ -41,6 +41,7 @@
   "dependencies": {
     "@aws-sdk/client-sesv2": "^3.0.0",
     "@hasna/cloud": "^0.1.24",
+    "@hasna/connect-cloudflare": "/home/hasna/workspace/hasna/opensource/opensourcedev/open-connectors/connectors/connect-cloudflare",
     "@hasna/connect-gmail": "^0.1.1",
     "@hasna/connectors": "^1.3.3",
     "@modelcontextprotocol/sdk": "^1.12.1",

@@ -58,6 +58,11 @@ export interface GmailSyncConfig {
   s3_region?: string;
 }
 
+export function getCloudflareToken(): string | undefined {
+  const fromConfig = loadConfig()["cloudflare_api_token"] as string | undefined;
+  return fromConfig || process.env["CLOUDFLARE_API_TOKEN"] || undefined;
+}
+
 export function getGmailSyncConfig(): GmailSyncConfig {
   const config = loadConfig();
   return {

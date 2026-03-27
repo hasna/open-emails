@@ -1827,6 +1827,66 @@ server.tool(
   },
 );
 
+// ─── CLOUDFLARE DNS ───────────────────────────────────────────────────────────
+
+server.tool(
+  "get_cloudflare_zone",
+  "Find the Cloudflare zone ID for a domain. Looks up zone by domain name.",
+  {
+    domain: z.string().describe("Domain name to look up"),
+    cloudflare_token: z.string().optional().describe("Cloudflare API token (falls back to config/env)"),
+  },
+  async ({ domain, cloudflare_token }) => {
+    try {
+      const { getCloudflare, findZone } = await import("../lib/cloudflare-dns.js");
+      const cf = getCloudflare(cloudflare_token);
+      const zone = await findZone(cf, domain);
+      if (!zone) return { content: [{ type: "text", text: `No Cloudflare zone found for ${domain}` }], isError: true };
+      return { content: [{ type: "text", text: JSON.stringify(zone, null, 2) }] };
+    } catch (e) {
+      return { content: [{ type: "text", text: `Error: ${formatError(e)}` }], isError: true };
+    }
+  },
+);
+
+server.tool(
+  "setup_cloudflare_dns",
+  "Automatically create all email DNS records (DKIM, SPF, DMARC, optionally MX) in Cloudflare for a domain. Skips records that already exist.",
+  {
+    domain: z.string().describe("Domain to configure"),
+    provider_id: z.string().describe("SES or Resend provider ID"),
+    cloudflare_token: z.string().optional().describe("Cloudflare API token (falls back to cloudflare_api_token config or CLOUDFLARE_API_TOKEN env)"),
+    add_mx: z.boolean().optional().describe("Also add MX record for receiving email"),
+    mx_server: z.string().optional().describe("Custom MX server hostname (default: inbound-smtp.<region>.amazonaws.com for SES)"),
+    register_domain: z.boolean().optional().describe("Register the domain with SES/Resend first if not already added"),
+  },
+  async ({ domain, provider_id, cloudflare_token, add_mx, mx_server, register_domain }) => {
+    try {
+      const provider = getProvider(resolveId("providers", provider_id));
+      if (!provider) throw new ProviderNotFoundError(provider_id);
+
+      if (register_domain) {
+        const adapter = getAdapter(provider);
+        await adapter.addDomain(domain);
+        createDomain(resolveId("providers", provider_id), domain);
+      }
+
+      const { setupEmailDns } = await import("../lib/cloudflare-dns.js");
+      const result = await setupEmailDns({
+        domain,
+        provider,
+        apiToken: cloudflare_token,
+        addMx: add_mx,
+        mxServer: mx_server,
+      });
+
+      return { content: [{ type: "text", text: JSON.stringify(result, null, 2) }] };
+    } catch (e) {
+      return { content: [{ type: "text", text: `Error: ${formatError(e)}` }], isError: true };
+    }
+  },
+);
+
 // ─── CONFIG ───────────────────────────────────────────────────────────────────
 
 import { loadConfig, saveConfig, getConfigValue, setConfigValue } from "../lib/config.js";
