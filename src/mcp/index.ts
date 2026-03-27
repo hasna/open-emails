@@ -20,7 +20,6 @@ import { storeEmailContent, getEmailContent } from "../db/email-content.js";
 import { listSandboxEmails, getSandboxEmail, clearSandboxEmails } from "../db/sandbox.js";
 import { listInboundEmails, getInboundEmail, clearInboundEmails, listReplies, getReplyCount } from "../db/inbound.js";
 import { syncGmailInbox, syncGmailInboxAll } from "../lib/gmail-sync.js";
-import { syncGmailFull, syncGmailFullAll } from "../lib/gmail-full-sync.js";
 import { getGmailSyncState, updateLastSynced } from "../db/gmail-sync-state.js";
 import { getDatabase, resolvePartialId } from "../db/database.js";
 import { getAdapter } from "../providers/index.js";
@@ -1231,81 +1230,6 @@ server.tool(
           }, null, 2),
         }],
       };
-    } catch (e) {
-      return { content: [{ type: "text", text: `Error: ${formatError(e)}` }], isError: true };
-    }
-  },
-);
-
-server.tool(
-  "sync_inbox_full",
-  "Sync Gmail inbox with FULL content — HTML body + attachment files (local or S3). Uses direct Gmail API for complete MIME fetch. Prefer this over sync_inbox for a complete archive.",
-  {
-    provider_id: z.string().describe("Gmail provider ID"),
-    label: z.string().optional().describe("Gmail label (default: INBOX)"),
-    query: z.string().optional().describe("Gmail search query"),
-    limit: z.number().optional().describe("Max messages per run (default: 50)"),
-    since: z.string().optional().describe("Only sync messages after this ISO date"),
-    all_pages: z.boolean().optional().describe("Sync all pages (full backfill)"),
-    download_attachments: z.boolean().optional().describe("Download and save attachment files (default: true)"),
-  },
-  async ({ provider_id, label, query, limit, since, all_pages, download_attachments }) => {
-    try {
-      const db = getDatabase();
-      const provider = getProvider(resolveId("providers", provider_id));
-      if (!provider) throw new ProviderNotFoundError(provider_id);
-
-      const opts = {
-        provider,
-        labelFilter: label,
-        query,
-        batchSize: limit,
-        since,
-        downloadAttachments: download_attachments ?? true,
-        db,
-      };
-
-      const result = all_pages
-        ? await syncGmailFullAll(opts)
-        : await syncGmailFull(opts);
-
-      updateLastSynced(provider_id, undefined, db);
-
-      return {
-        content: [{
-          type: "text",
-          text: JSON.stringify({
-            synced: result.synced,
-            skipped: result.skipped,
-            attachments_saved: result.attachments_saved,
-            errors: result.errors,
-            done: result.done,
-            nextPageToken: result.nextPageToken,
-          }, null, 2),
-        }],
-      };
-    } catch (e) {
-      return { content: [{ type: "text", text: `Error: ${formatError(e)}` }], isError: true };
-    }
-  },
-);
-
-server.tool(
-  "get_attachment",
-  "Get the local path or S3 URL for a downloaded email attachment",
-  {
-    email_id: z.string().describe("Inbound email ID"),
-    filename: z.string().optional().describe("Attachment filename (returns all if omitted)"),
-  },
-  async ({ email_id, filename }) => {
-    try {
-      const db = getDatabase();
-      const email = db.query("SELECT attachment_paths FROM inbound_emails WHERE id = ?").get(email_id) as { attachment_paths: string } | null;
-      if (!email) return { content: [{ type: "text", text: `Email not found: ${email_id}` }], isError: true };
-
-      const paths = JSON.parse(email.attachment_paths ?? "[]") as Array<{ filename: string; local_path?: string; s3_url?: string; content_type: string; size: number }>;
-      const filtered = filename ? paths.filter((p) => p.filename === filename) : paths;
-      return { content: [{ type: "text", text: JSON.stringify(filtered, null, 2) }] };
     } catch (e) {
       return { content: [{ type: "text", text: `Error: ${formatError(e)}` }], isError: true };
     }
