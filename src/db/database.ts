@@ -433,6 +433,12 @@ const MIGRATIONS = [
   CREATE UNIQUE INDEX IF NOT EXISTS idx_triage_inbound_unique ON email_triage(inbound_email_id) WHERE inbound_email_id IS NOT NULL;
   INSERT OR IGNORE INTO _migrations (id) VALUES (16);
   `,
+
+  // Migration 17: attachment_paths — store local/S3 paths for downloaded attachments
+  `
+  ALTER TABLE inbound_emails ADD COLUMN attachment_paths TEXT NOT NULL DEFAULT '[]';
+  INSERT OR IGNORE INTO _migrations (id) VALUES (17);
+  `,
 ];
 
 let _db: Database | null = null;
@@ -702,6 +708,7 @@ function ensureSchema(db: Database): void {
   // Dedup index on inbound_emails for Gmail sync
   ensureIndex(`CREATE UNIQUE INDEX IF NOT EXISTS idx_inbound_provider_message ON inbound_emails(provider_id, message_id)
     WHERE provider_id IS NOT NULL AND message_id IS NOT NULL`);
+  ensureColumn("ALTER TABLE inbound_emails ADD COLUMN attachment_paths TEXT NOT NULL DEFAULT '[]'");
 
   // Ensure email_triage table exists
   ensureTable(`CREATE TABLE IF NOT EXISTS email_triage (

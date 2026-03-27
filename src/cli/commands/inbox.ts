@@ -1,7 +1,9 @@
 import type { Command } from "commander";
 import chalk from "chalk";
 import { syncGmailInbox, syncGmailInboxAll, listGmailLabels } from "../../lib/gmail-sync.js";
+import { syncGmailFull, syncGmailFullAll } from "../../lib/gmail-full-sync.js";
 import { listInboundEmails, getInboundEmail, deleteInboundEmail, clearInboundEmails, getInboundCount } from "../../db/inbound.js";
+import { getProvider } from "../../db/providers.js";
 import { getGmailSyncState, updateLastSynced } from "../../db/gmail-sync-state.js";
 import { listProviders } from "../../db/providers.js";
 import { getDatabase } from "../../db/database.js";
@@ -231,6 +233,108 @@ export function registerInboxCommands(program: Command, output: (data: unknown, 
           console.error(chalk.red(`Email not found: ${id}`));
           process.exit(1);
         }
+      } catch (e) {
+        handleError(e);
+      }
+    });
+
+  // ─── SYNC-FULL ────────────────────────────────────────────────────────────
+  inboxCmd
+    .command("sync-full")
+    .description("Sync Gmail with full MIME — HTML body + attachments (local or S3)")
+    .option("--provider <id>", "Provider ID or name (defaults to first active Gmail provider)")
+    .option("--label <label>", "Gmail label to sync", "INBOX")
+    .option("--query <query>", "Gmail search query")
+    .option("--limit <n>", "Max messages per run", "50")
+    .option("--since <date>", "Only sync messages after this date")
+    .option("--all", "Sync all pages (full backfill)")
+    .option("--no-attachments", "Skip attachment download")
+    .action(async (opts: {
+      provider?: string; label?: string; query?: string;
+      limit?: string; since?: string; all?: boolean; attachments: boolean;
+    }) => {
+      try {
+        const db = getDatabase();
+        const providerId = resolveGmailProvider(opts.provider);
+        if (!providerId) {
+          console.error(chalk.red("No Gmail provider found. Add one with: emails provider add-gmail"));
+          process.exit(1);
+        }
+        const provider = getProvider(providerId, db);
+        if (!provider) {
+          console.error(chalk.red(`Provider not found: ${providerId}`));
+          process.exit(1);
+        }
+
+        console.log(chalk.dim(`Full sync for ${provider.name} (HTML + attachments)...`));
+
+        const syncOpts = {
+          provider,
+          labelFilter: opts.label,
+          query: opts.query,
+          batchSize: parseInt(opts.limit ?? "50", 10),
+          since: opts.since,
+          downloadAttachments: opts.attachments !== false,
+          db,
+        };
+
+        const result = opts.all
+          ? await syncGmailFullAll(syncOpts)
+          : await syncGmailFull(syncOpts);
+
+        updateLastSynced(providerId, undefined, db);
+
+        const lines: string[] = [chalk.bold("\nFull sync complete:")];
+        lines.push(`  Synced:      ${chalk.green(String(result.synced))}`);
+        lines.push(`  Skipped:     ${chalk.dim(String(result.skipped))} (already in DB)`);
+        lines.push(`  Attachments: ${chalk.cyan(String(result.attachments_saved))} files saved`);
+        if (result.errors.length > 0) lines.push(`  Errors:      ${chalk.red(String(result.errors.length))}`);
+        if (!result.done && !opts.all) lines.push(chalk.dim("  More pages available. Use --all to sync everything."));
+        lines.push("");
+        output(result, lines.join("\n"));
+
+        if (result.errors.length > 0) {
+          console.log(chalk.yellow("\nErrors:"));
+          for (const e of result.errors) console.log(chalk.yellow(`  ${e}`));
+        }
+      } catch (e) {
+        handleError(e);
+      }
+    });
+
+  // ─── ATTACHMENT ───────────────────────────────────────────────────────────
+  inboxCmd
+    .command("attachment <emailId>")
+    .description("Show or download attachment paths for a synced email")
+    .option("--filename <name>", "Filter by attachment filename")
+    .action((emailId: string, opts: { filename?: string }) => {
+      try {
+        const db = getDatabase();
+        const row = db.query("SELECT attachment_paths FROM inbound_emails WHERE id = ?").get(emailId) as { attachment_paths: string } | null;
+        if (!row) {
+          console.error(chalk.red(`Email not found: ${emailId}`));
+          process.exit(1);
+        }
+        type AttPath = { filename: string; content_type: string; size: number; local_path?: string; s3_url?: string };
+        const paths = JSON.parse(row.attachment_paths ?? "[]") as AttPath[];
+        const filtered = opts.filename ? paths.filter((p) => p.filename === opts.filename) : paths;
+
+        if (filtered.length === 0) {
+          console.log(chalk.dim("No attachments found."));
+          return;
+        }
+
+        console.log(chalk.bold(`\nAttachments for ${emailId.slice(0, 8)}:`));
+        for (const p of filtered) {
+          const loc = p.local_path
+            ? chalk.cyan(p.local_path)
+            : p.s3_url
+            ? chalk.blue(p.s3_url)
+            : chalk.dim("(not downloaded)");
+          console.log(`  ${p.filename.padEnd(40)} ${chalk.dim(p.content_type)}  ${loc}`);
+        }
+        console.log();
+        output(filtered, "");
       } catch (e) {
         handleError(e);
       }

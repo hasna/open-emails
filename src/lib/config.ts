@@ -42,3 +42,28 @@ export function getFailoverProviderIds(): string[] {
   if (!val) return [];
   return String(val).split(",").map(s => s.trim()).filter(Boolean);
 }
+
+// ─── Gmail Attachment Config ──────────────────────────────────────────────────
+
+export type AttachmentStorage = "local" | "s3" | "none";
+
+export interface GmailSyncConfig {
+  /** Where to store attachment files: local fs, S3, or skip. Default: "local" */
+  attachment_storage: AttachmentStorage;
+  /** S3 bucket name (required when attachment_storage = "s3") */
+  s3_bucket?: string;
+  /** S3 key prefix (default: "emails") */
+  s3_prefix?: string;
+  /** S3 region (default: us-east-1) */
+  s3_region?: string;
+}
+
+export function getGmailSyncConfig(): GmailSyncConfig {
+  const config = loadConfig();
+  return {
+    attachment_storage: (config["gmail_attachment_storage"] as AttachmentStorage) ?? "local",
+    s3_bucket: config["gmail_s3_bucket"] as string | undefined,
+    s3_prefix: (config["gmail_s3_prefix"] as string | undefined) ?? "emails",
+    s3_region: (config["gmail_s3_region"] as string | undefined) ?? "us-east-1",
+  };
+}

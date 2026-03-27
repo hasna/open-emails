@@ -1,6 +1,22 @@
 import type { Database } from "bun:sqlite";
 import { getDatabase, uuid, now } from "./database.js";
 
+export interface AttachmentMeta {
+  filename: string;
+  content_type: string;
+  size: number;
+}
+
+export interface AttachmentPath {
+  filename: string;
+  content_type: string;
+  size: number;
+  /** Local file path, e.g. ~/.hasna/emails/attachments/<email_id>/filename */
+  local_path?: string;
+  /** S3 URL if uploaded, e.g. s3://bucket/emails/<email_id>/filename */
+  s3_url?: string;
+}
+
 export interface InboundEmail {
   id: string;
   provider_id: string | null;
@@ -12,7 +28,8 @@ export interface InboundEmail {
   subject: string;
   text_body: string | null;
   html_body: string | null;
-  attachments: { filename: string; content_type: string; size: number }[];
+  attachments: AttachmentMeta[];
+  attachment_paths: AttachmentPath[];
   headers: Record<string, string>;
   raw_size: number;
   received_at: string;
@@ -31,6 +48,7 @@ interface InboundEmailRow {
   text_body: string | null;
   html_body: string | null;
   attachments_json: string;
+  attachment_paths: string;
   headers_json: string;
   raw_size: number;
   received_at: string;
@@ -49,7 +67,8 @@ function rowToEmail(row: InboundEmailRow): InboundEmail {
     subject: row.subject,
     text_body: row.text_body,
     html_body: row.html_body,
-    attachments: JSON.parse(row.attachments_json) as { filename: string; content_type: string; size: number }[],
+    attachments: JSON.parse(row.attachments_json) as AttachmentMeta[],
+    attachment_paths: JSON.parse(row.attachment_paths ?? "[]") as AttachmentPath[],
     headers: JSON.parse(row.headers_json) as Record<string, string>,
     raw_size: row.raw_size,
     received_at: row.received_at,
@@ -86,8 +105,8 @@ export function storeInboundEmail(
   d.run(
     `INSERT INTO inbound_emails
        (id, provider_id, message_id, in_reply_to_email_id, from_address, to_addresses, cc_addresses,
-        subject, text_body, html_body, attachments_json, headers_json, raw_size, received_at)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        subject, text_body, html_body, attachments_json, attachment_paths, headers_json, raw_size, received_at)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
     [
       id,
       input.provider_id,
@@ -100,6 +119,7 @@ export function storeInboundEmail(
       input.text_body,
       input.html_body,
       JSON.stringify(input.attachments),
+      JSON.stringify((input as InboundEmail).attachment_paths ?? []),
       JSON.stringify(input.headers),
       input.raw_size,
       input.received_at || now(),
@@ -129,6 +149,11 @@ export function storeInboundEmail(
   }
 
   return stored;
+}
+
+export function updateAttachmentPaths(id: string, paths: AttachmentPath[], db?: Database): void {
+  const d = db || getDatabase();
+  d.run("UPDATE inbound_emails SET attachment_paths = ? WHERE id = ?", [JSON.stringify(paths), id]);
 }
 
 export function listReplies(emailId: string, db?: Database): InboundEmail[] {
