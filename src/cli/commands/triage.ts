@@ -73,10 +73,10 @@ export function registerTriageCommands(program: Command, output: (data: unknown,
   triageCmd
     .command("show <email-id>")
     .description("Show triage result for an email")
-    .option("--type <type>", "Email type: sent or inbound", "sent")
+    .option("--type <type>", "Email type: inbound or sent (default: inbound)", "inbound")
     .action((emailId: string, opts: { type?: string }) => {
       try {
-        const type = (opts.type === "inbound" ? "inbound" : "sent") as "sent" | "inbound";
+        const type = (opts.type === "sent" ? "sent" : "inbound") as "sent" | "inbound";
         const triage = getTriage(emailId, type);
         if (!triage) {
           console.log(chalk.yellow("No triage result found for this email."));
@@ -170,11 +170,11 @@ export function registerTriageCommands(program: Command, output: (data: unknown,
   triageCmd
     .command("draft <email-id>")
     .description("Generate a draft reply for an email")
-    .option("--type <type>", "Email type: sent or inbound", "sent")
+    .option("--type <type>", "Email type: inbound or sent (default: inbound)", "inbound")
     .option("--model <model>", "Cerebras model to use")
     .action(async (emailId: string, opts: { type?: string; model?: string }) => {
       try {
-        const type = (opts.type === "inbound" ? "inbound" : "sent") as "sent" | "inbound";
+        const type = (opts.type === "sent" ? "sent" : "inbound") as "sent" | "inbound";
         console.log(chalk.dim("Generating draft reply..."));
         const draft = await generateDraftForEmail(emailId, type, { model: opts.model });
         output({ draft }, `${chalk.bold("Draft Reply:")}\n\n${draft}`);
@@ -187,11 +187,11 @@ export function registerTriageCommands(program: Command, output: (data: unknown,
   triageCmd
     .command("reset <email-id>")
     .description("Delete triage result for an email and optionally re-triage")
-    .option("--type <type>", "Email type: sent or inbound", "sent")
+    .option("--type <type>", "Email type: inbound or sent (default: inbound)", "inbound")
     .option("--retriage", "Re-triage after reset")
     .action(async (emailId: string, opts: { type?: string; retriage?: boolean }) => {
       try {
-        const type = (opts.type === "inbound" ? "inbound" : "sent") as "sent" | "inbound";
+        const type = (opts.type === "sent" ? "sent" : "inbound") as "sent" | "inbound";
         const deleted = deleteTriageByEmail(emailId, type);
         if (!deleted) {
           console.log(chalk.yellow("No triage result found for this email."));

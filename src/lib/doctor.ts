@@ -83,6 +83,48 @@ export async function runDiagnostics(db?: Database): Promise<DoctorCheck[]> {
   const templates = listTemplates(db);
   checks.push({ name: "Templates", status: "pass", message: `${templates.length} template(s)` });
 
+  // 9. Gmail OAuth status
+  const gmailProviders = providers.filter((p) => p.type === "gmail");
+  for (const p of gmailProviders) {
+    if (!p.oauth_refresh_token) {
+      checks.push({ name: `Gmail: ${p.name}`, status: "fail", message: "No refresh token — run 'emails provider auth <id>'" });
+      continue;
+    }
+
+    const expiryStatus = (() => {
+      if (!p.oauth_token_expiry) return { status: "warn" as const, message: "Token expiry unknown — will refresh on next use" };
+      const expiry = new Date(p.oauth_token_expiry).getTime();
+      const now = Date.now();
+      if (expiry < now) return { status: "warn" as const, message: `Access token expired (${p.oauth_token_expiry}) — will auto-refresh` };
+      const minsLeft = Math.round((expiry - now) / 60000);
+      return { status: "pass" as const, message: `Access token valid (~${minsLeft}min remaining)` };
+    })();
+
+    // Live check — try fetching the profile
+    try {
+      const { Gmail } = await import("@hasna/connect-gmail");
+      const gmail = Gmail.createWithTokens({
+        accessToken: p.oauth_access_token ?? "",
+        refreshToken: p.oauth_refresh_token,
+        clientId: p.oauth_client_id ?? "",
+        clientSecret: p.oauth_client_secret ?? "",
+        expiresAt: p.oauth_token_expiry ? new Date(p.oauth_token_expiry).getTime() : undefined,
+      });
+      const profile = await gmail.profile.get();
+      checks.push({
+        name: `Gmail: ${p.name}`,
+        status: "pass",
+        message: `Authenticated as ${profile.emailAddress} (${expiryStatus.message})`,
+      });
+    } catch (e) {
+      checks.push({
+        name: `Gmail: ${p.name}`,
+        status: "fail",
+        message: `Auth failed: ${e instanceof Error ? e.message : String(e)}`,
+      });
+    }
+  }
+
   return checks;
 }
 

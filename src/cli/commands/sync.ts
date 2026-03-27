@@ -5,6 +5,7 @@ import { getLocalStats, formatStatsTable } from "../../lib/stats.js";
 import { syncAll, syncProvider } from "../../lib/sync.js";
 import { getAnalytics, formatAnalytics } from "../../lib/analytics.js";
 import { colorStatus, truncate } from "../../lib/format.js";
+import { getDatabase } from "../../db/database.js";
 import { handleError, resolveId, parseDuration, padRight } from "../utils.js";
 
 export function registerSyncCommands(program: Command, output: (data: unknown, formatted: string) => void): void {
@@ -57,8 +58,45 @@ export function registerSyncCommands(program: Command, output: (data: unknown, f
     .description("Show email delivery statistics")
     .option("--provider <id>", "Provider ID")
     .option("--period <period>", "Period: 7d, 30d, 90d", "30d")
-    .action((opts: { provider?: string; period?: string }) => {
+    .option("--inbox", "Show inbound email stats instead of outbound")
+    .action((opts: { provider?: string; period?: string; inbox?: boolean }) => {
       try {
+        if (opts.inbox) {
+          const db = getDatabase();
+          const providerFilter = opts.provider ? resolveId("providers", opts.provider) : undefined;
+          const days = parseInt((opts.period ?? "30d").replace("d", ""), 10) || 30;
+          const since = new Date(Date.now() - days * 24 * 60 * 60 * 1000).toISOString();
+
+          const provCond = providerFilter ? "AND provider_id = ?" : "";
+          const params = providerFilter ? [since, providerFilter] : [since];
+
+          const db_ = db;
+          const total = (db_.query(`SELECT COUNT(*) as c FROM inbound_emails WHERE received_at >= ? ${provCond}`).get(...params) as { c: number }).c;
+          const withAttachments = (db_.query(`SELECT COUNT(*) as c FROM inbound_emails WHERE received_at >= ? AND attachments_json != '[]' ${provCond}`).get(...params) as { c: number }).c;
+
+          const topSenders = db_.query(
+            `SELECT from_address, COUNT(*) as cnt FROM inbound_emails WHERE received_at >= ? ${provCond} GROUP BY from_address ORDER BY cnt DESC LIMIT 5`
+          ).all(...params) as { from_address: string; cnt: number }[];
+
+          const inboxStats = { period: opts.period ?? "30d", total, with_attachments: withAttachments, top_senders: topSenders };
+
+          const lines = [
+            chalk.bold("\nInbound Email Stats:"),
+            `  Period:           ${opts.period ?? "30d"}`,
+            `  Total received:   ${chalk.green(String(total))}`,
+            `  With attachments: ${chalk.cyan(String(withAttachments))}`,
+          ];
+          if (topSenders.length > 0) {
+            lines.push("", chalk.bold("  Top senders:"));
+            for (const s of topSenders) {
+              lines.push(`    ${String(s.cnt).padStart(4)}  ${s.from_address}`);
+            }
+          }
+          lines.push("");
+          output(inboxStats, lines.join("\n"));
+          return;
+        }
+
         const providerId = opts.provider ? resolveId("providers", opts.provider) : undefined;
         const stats = getLocalStats(providerId, opts.period ?? "30d");
         output(stats, chalk.bold("\nEmail Stats:\n") + formatStatsTable(stats));

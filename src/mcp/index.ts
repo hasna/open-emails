@@ -1237,6 +1237,121 @@ server.tool(
   },
 );
 
+async function gmailMessageAction(
+  email_id: string,
+  provider_id: string,
+  action: (gmail: Awaited<ReturnType<(typeof import("@hasna/connect-gmail"))["Gmail"]["createWithTokens"]>>, msgId: string) => Promise<unknown>,
+): Promise<string> {
+  const db = getDatabase();
+  const row = db.query("SELECT message_id FROM inbound_emails WHERE id = ?").get(email_id) as { message_id: string } | null;
+  if (!row?.message_id) throw new Error(`No Gmail message ID for email ${email_id}`);
+  const provider = getProvider(resolveId("providers", provider_id));
+  if (!provider) throw new ProviderNotFoundError(provider_id);
+  const { Gmail } = await import("@hasna/connect-gmail");
+  const gmail = Gmail.createWithTokens({
+    accessToken: provider.oauth_access_token ?? "",
+    refreshToken: provider.oauth_refresh_token ?? "",
+    clientId: provider.oauth_client_id ?? "",
+    clientSecret: provider.oauth_client_secret ?? "",
+    expiresAt: provider.oauth_token_expiry ? new Date(provider.oauth_token_expiry).getTime() : undefined,
+  });
+  await action(gmail, row.message_id);
+  return row.message_id;
+}
+
+server.tool(
+  "mark_email_read",
+  "Mark a synced inbound Gmail email as read",
+  { email_id: z.string(), provider_id: z.string() },
+  async ({ email_id, provider_id }) => {
+    try {
+      await gmailMessageAction(email_id, provider_id, (g, id) => g.messages.markAsRead(id));
+      return { content: [{ type: "text", text: `Marked as read: ${email_id}` }] };
+    } catch (e) { return { content: [{ type: "text", text: `Error: ${formatError(e)}` }], isError: true }; }
+  },
+);
+
+server.tool(
+  "archive_email",
+  "Archive a synced inbound Gmail email (removes from INBOX)",
+  { email_id: z.string(), provider_id: z.string() },
+  async ({ email_id, provider_id }) => {
+    try {
+      await gmailMessageAction(email_id, provider_id, (g, id) => g.messages.archive(id));
+      return { content: [{ type: "text", text: `Archived: ${email_id}` }] };
+    } catch (e) { return { content: [{ type: "text", text: `Error: ${formatError(e)}` }], isError: true }; }
+  },
+);
+
+server.tool(
+  "star_email",
+  "Star a synced inbound Gmail email",
+  { email_id: z.string(), provider_id: z.string() },
+  async ({ email_id, provider_id }) => {
+    try {
+      await gmailMessageAction(email_id, provider_id, (g, id) => g.messages.star(id));
+      return { content: [{ type: "text", text: `Starred: ${email_id}` }] };
+    } catch (e) { return { content: [{ type: "text", text: `Error: ${formatError(e)}` }], isError: true }; }
+  },
+);
+
+server.tool(
+  "reply_to_email",
+  "Reply to a synced inbound Gmail email, keeping it in the same thread",
+  {
+    email_id: z.string().describe("Inbound email ID (from local DB)"),
+    body: z.string().describe("Reply body text"),
+    provider_id: z.string().describe("Gmail provider ID"),
+    is_html: z.boolean().optional().describe("Treat body as HTML (default: false)"),
+  },
+  async ({ email_id, body, provider_id, is_html }) => {
+    try {
+      const db = getDatabase();
+      const row = db.query("SELECT message_id, subject FROM inbound_emails WHERE id = ?").get(email_id) as { message_id: string; subject: string } | null;
+      if (!row) throw new Error(`Inbound email not found: ${email_id}`);
+      if (!row.message_id) throw new Error("Email has no Gmail message ID");
+
+      const provider = getProvider(resolveId("providers", provider_id));
+      if (!provider) throw new ProviderNotFoundError(provider_id);
+
+      const { Gmail } = await import("@hasna/connect-gmail");
+      const gmail = Gmail.createWithTokens({
+        accessToken: provider.oauth_access_token ?? "",
+        refreshToken: provider.oauth_refresh_token ?? "",
+        clientId: provider.oauth_client_id ?? "",
+        clientSecret: provider.oauth_client_secret ?? "",
+        expiresAt: provider.oauth_token_expiry ? new Date(provider.oauth_token_expiry).getTime() : undefined,
+      });
+
+      const sent = await gmail.messages.reply(row.message_id, { body, isHtml: is_html ?? false });
+      return { content: [{ type: "text", text: JSON.stringify({ sent_id: sent.id, replied_to: row.subject }, null, 2) }] };
+    } catch (e) {
+      return { content: [{ type: "text", text: `Error: ${formatError(e)}` }], isError: true };
+    }
+  },
+);
+
+server.tool(
+  "get_attachment",
+  "Get local path or S3 URL for downloaded attachments on a synced inbound email",
+  {
+    email_id: z.string().describe("Inbound email ID"),
+    filename: z.string().optional().describe("Filter by filename (returns all if omitted)"),
+  },
+  async ({ email_id, filename }) => {
+    try {
+      const db = getDatabase();
+      const row = db.query("SELECT attachment_paths FROM inbound_emails WHERE id = ?").get(email_id) as { attachment_paths: string } | null;
+      if (!row) return { content: [{ type: "text", text: `Email not found: ${email_id}` }], isError: true };
+      const paths = JSON.parse(row.attachment_paths ?? "[]") as Array<{ filename: string; local_path?: string; s3_url?: string; content_type: string; size: number }>;
+      const filtered = filename ? paths.filter((p) => p.filename === filename) : paths;
+      return { content: [{ type: "text", text: JSON.stringify(filtered, null, 2) }] };
+    } catch (e) {
+      return { content: [{ type: "text", text: `Error: ${formatError(e)}` }], isError: true };
+    }
+  },
+);
+
 server.tool(
   "search_inbound",
   "Search synced inbound emails in local SQLite by subject, sender, or body text",
@@ -1706,6 +1821,57 @@ server.tool(
     try {
       const deleted = deleteTriage(triage_id);
       return { content: [{ type: "text", text: deleted ? "Deleted" : "Not found" }] };
+    } catch (e) {
+      return { content: [{ type: "text", text: `Error: ${formatError(e)}` }], isError: true };
+    }
+  },
+);
+
+// ─── CONFIG ───────────────────────────────────────────────────────────────────
+
+import { loadConfig, saveConfig, getConfigValue, setConfigValue } from "../lib/config.js";
+
+server.tool(
+  "get_config",
+  "Get a configuration value by key",
+  { key: z.string().describe("Config key (e.g. gmail_attachment_storage, gmail_s3_bucket, default_provider)") },
+  async ({ key }) => {
+    try {
+      const value = getConfigValue(key);
+      return { content: [{ type: "text", text: value === undefined ? `${key} is not set` : JSON.stringify({ [key]: value }, null, 2) }] };
+    } catch (e) {
+      return { content: [{ type: "text", text: `Error: ${formatError(e)}` }], isError: true };
+    }
+  },
+);
+
+server.tool(
+  "set_config",
+  "Set a configuration value. Known keys: gmail_attachment_storage (local|s3|none), gmail_s3_bucket, gmail_s3_prefix, gmail_s3_region, default_provider, failover-providers",
+  {
+    key: z.string().describe("Config key"),
+    value: z.string().describe("Config value (strings, numbers, or JSON)"),
+  },
+  async ({ key, value }) => {
+    try {
+      let parsed: unknown;
+      try { parsed = JSON.parse(value); } catch { parsed = value; }
+      setConfigValue(key, parsed);
+      return { content: [{ type: "text", text: `✓ ${key} = ${JSON.stringify(parsed)}` }] };
+    } catch (e) {
+      return { content: [{ type: "text", text: `Error: ${formatError(e)}` }], isError: true };
+    }
+  },
+);
+
+server.tool(
+  "list_config",
+  "List all configuration values",
+  {},
+  async () => {
+    try {
+      const config = loadConfig();
+      return { content: [{ type: "text", text: JSON.stringify(config, null, 2) }] };
     } catch (e) {
       return { content: [{ type: "text", text: `Error: ${formatError(e)}` }], isError: true };
     }

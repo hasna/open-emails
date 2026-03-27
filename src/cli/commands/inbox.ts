@@ -1,5 +1,6 @@
 import type { Command } from "commander";
 import chalk from "chalk";
+import { Gmail as Gmail_ } from "@hasna/connect-gmail";
 import { syncGmailInbox, syncGmailInboxAll, listGmailLabels } from "../../lib/gmail-sync.js";
 import { listInboundEmails, getInboundEmail, deleteInboundEmail, clearInboundEmails, getInboundCount } from "../../db/inbound.js";
 import { getGmailSyncState, updateLastSynced } from "../../db/gmail-sync-state.js";
@@ -20,6 +21,7 @@ export function registerInboxCommands(program: Command, output: (data: unknown, 
     .option("--limit <n>", "Max messages per sync run", "50")
     .option("--since <date>", "Only sync messages after this date (ISO 8601 or YYYY-MM-DD)")
     .option("--all", "Sync all pages until done (use for initial backfill)")
+    .option("--no-attachments", "Skip attachment download")
     .action(async (opts: {
       provider?: string;
       label?: string;
@@ -27,6 +29,7 @@ export function registerInboxCommands(program: Command, output: (data: unknown, 
       limit?: string;
       since?: string;
       all?: boolean;
+      attachments: boolean;
     }) => {
       try {
         const db = getDatabase();
@@ -44,14 +47,39 @@ export function registerInboxCommands(program: Command, output: (data: unknown, 
           query: opts.query,
           batchSize: parseInt(opts.limit ?? "50", 10),
           since: opts.since,
+          downloadAttachments: opts.attachments !== false,
           db,
         };
 
         console.log(chalk.dim(`Syncing Gmail inbox for provider ${providerId}...`));
 
-        const result = opts.all
-          ? await syncGmailInboxAll(syncOpts)
-          : await syncGmailInbox(syncOpts);
+        let result;
+        if (opts.all) {
+          // Paginate manually so we can print progress per page
+          const { syncGmailInbox: syncPage } = await import("../../lib/gmail-sync.js");
+          const aggregate = { synced: 0, skipped: 0, attachments_saved: 0, errors: [] as string[], done: true };
+          let pageToken: string | undefined;
+          let page = 0;
+          do {
+            page++;
+            const pageResult = await syncPage({ ...syncOpts, pageToken });
+            aggregate.synced += pageResult.synced;
+            aggregate.skipped += pageResult.skipped;
+            aggregate.attachments_saved += pageResult.attachments_saved ?? 0;
+            aggregate.errors.push(...pageResult.errors);
+            pageToken = pageResult.nextPageToken;
+            aggregate.done = pageResult.done;
+            process.stdout.write(
+              chalk.dim(`  Page ${page}: synced ${pageResult.synced}, skipped ${pageResult.skipped}`) +
+              (pageResult.attachments_saved ? chalk.dim(`, ${pageResult.attachments_saved} attachments`) : "") +
+              (pageResult.done ? "" : chalk.dim(" — continuing...")) + "\n",
+            );
+            if (aggregate.errors.length >= 20) { aggregate.errors.push("Too many errors — aborting"); break; }
+          } while (!aggregate.done);
+          result = aggregate;
+        } else {
+          result = await syncGmailInbox(syncOpts);
+        }
 
         // Update sync state
         updateLastSynced(providerId, undefined, db);
@@ -232,6 +260,143 @@ export function registerInboxCommands(program: Command, output: (data: unknown, 
       }
     });
 
+  // ─── GMAIL ACTIONS ────────────────────────────────────────────────────────
+
+  async function gmailAction(emailId: string, providerOpt: string | undefined, action: (gmail: ReturnType<typeof Gmail_["createWithTokens"]>, msgId: string) => Promise<void>, label: string) {
+    const db = getDatabase();
+    const row = db.query("SELECT message_id FROM inbound_emails WHERE id = ?").get(emailId) as { message_id: string } | null;
+    if (!row?.message_id) throw new Error(`No Gmail message ID for email ${emailId}`);
+    const providerId = resolveGmailProvider(providerOpt);
+    if (!providerId) throw new Error("No Gmail provider found");
+    const { getProvider } = await import("../../db/providers.js");
+    const provider = getProvider(providerId, db);
+    if (!provider) throw new Error(`Provider not found: ${providerId}`);
+    const gmail = Gmail_.createWithTokens({
+      accessToken: provider.oauth_access_token ?? "",
+      refreshToken: provider.oauth_refresh_token ?? "",
+      clientId: provider.oauth_client_id ?? "",
+      clientSecret: provider.oauth_client_secret ?? "",
+      expiresAt: provider.oauth_token_expiry ? new Date(provider.oauth_token_expiry).getTime() : undefined,
+    });
+    await action(gmail, row.message_id);
+    console.log(chalk.green(`✓ ${label}: ${emailId.slice(0, 8)}`));
+  }
+
+  inboxCmd
+    .command("mark-read <emailId>")
+    .description("Mark a Gmail message as read")
+    .option("--provider <id>", "Provider ID")
+    .action(async (emailId: string, opts: { provider?: string }) => {
+      try {
+        await gmailAction(emailId, opts.provider, (g, id) => g.messages.markAsRead(id), "Marked as read");
+      } catch (e) { handleError(e); }
+    });
+
+  inboxCmd
+    .command("archive <emailId>")
+    .description("Archive a Gmail message (remove from INBOX)")
+    .option("--provider <id>", "Provider ID")
+    .action(async (emailId: string, opts: { provider?: string }) => {
+      try {
+        await gmailAction(emailId, opts.provider, (g, id) => g.messages.archive(id), "Archived");
+      } catch (e) { handleError(e); }
+    });
+
+  inboxCmd
+    .command("star <emailId>")
+    .description("Star a Gmail message")
+    .option("--provider <id>", "Provider ID")
+    .action(async (emailId: string, opts: { provider?: string }) => {
+      try {
+        await gmailAction(emailId, opts.provider, (g, id) => g.messages.star(id), "Starred");
+      } catch (e) { handleError(e); }
+    });
+
+  // ─── REPLY ────────────────────────────────────────────────────────────────
+  inboxCmd
+    .command("reply <emailId>")
+    .description("Reply to a synced inbound email via Gmail")
+    .requiredOption("--body <text>", "Reply body text")
+    .option("--provider <id>", "Provider ID (defaults to first active Gmail provider)")
+    .option("--html", "Treat body as HTML")
+    .action(async (emailId: string, opts: { body: string; provider?: string; html?: boolean }) => {
+      try {
+        const db = getDatabase();
+        const email = (db.query("SELECT * FROM inbound_emails WHERE id = ?").get(emailId)) as { message_id: string; subject: string; from_address: string } | null;
+        if (!email) {
+          console.error(chalk.red(`Email not found: ${emailId}`));
+          process.exit(1);
+        }
+        if (!email.message_id) {
+          console.error(chalk.red("This email has no Gmail message ID — cannot reply."));
+          process.exit(1);
+        }
+
+        const providerId = resolveGmailProvider(opts.provider);
+        if (!providerId) {
+          console.error(chalk.red("No Gmail provider found."));
+          process.exit(1);
+        }
+        const { getProvider } = await import("../../db/providers.js");
+        const { Gmail } = await import("@hasna/connect-gmail");
+        const provider = getProvider(providerId, db);
+        if (!provider) {
+          console.error(chalk.red(`Provider not found: ${providerId}`));
+          process.exit(1);
+        }
+
+        const gmail = Gmail.createWithTokens({
+          accessToken: provider.oauth_access_token ?? "",
+          refreshToken: provider.oauth_refresh_token ?? "",
+          clientId: provider.oauth_client_id ?? "",
+          clientSecret: provider.oauth_client_secret ?? "",
+          expiresAt: provider.oauth_token_expiry ? new Date(provider.oauth_token_expiry).getTime() : undefined,
+        });
+
+        console.log(chalk.dim(`Replying to: ${email.subject}`));
+        const sent = await gmail.messages.reply(email.message_id, {
+          body: opts.body,
+          isHtml: opts.html ?? false,
+        });
+        console.log(chalk.green(`✓ Reply sent (message ID: ${sent.id})`));
+        output(sent, "");
+      } catch (e) {
+        handleError(e);
+      }
+    });
+
+  // ─── ATTACHMENT ───────────────────────────────────────────────────────────
+  inboxCmd
+    .command("attachment <emailId>")
+    .description("Show downloaded attachment paths for a synced email")
+    .option("--filename <name>", "Filter by filename")
+    .action((emailId: string, opts: { filename?: string }) => {
+      try {
+        const db = getDatabase();
+        const row = db.query("SELECT attachment_paths FROM inbound_emails WHERE id = ?").get(emailId) as { attachment_paths: string } | null;
+        if (!row) {
+          console.error(chalk.red(`Email not found: ${emailId}`));
+          process.exit(1);
+        }
+        type AttPath = { filename: string; content_type: string; size: number; local_path?: string; s3_url?: string };
+        const paths = JSON.parse(row.attachment_paths ?? "[]") as AttPath[];
+        const filtered = opts.filename ? paths.filter((p) => p.filename === opts.filename) : paths;
+        if (filtered.length === 0) {
+          console.log(chalk.dim("No attachments found for this email."));
+          return;
+        }
+        console.log(chalk.bold(`\nAttachments for ${emailId.slice(0, 8)}:`));
+        for (const p of filtered) {
+          const loc = p.local_path ? chalk.cyan(p.local_path) : p.s3_url ? chalk.blue(p.s3_url) : chalk.dim("(not downloaded)");
+          console.log(`  ${p.filename.padEnd(40)} ${chalk.dim(p.content_type)}  ${loc}`);
+        }
+        console.log();
+        output(filtered, "");
+      } catch (e) {
+        handleError(e);
+      }
+    });
+
   // ─── DELETE ───────────────────────────────────────────────────────────────
   inboxCmd
     .command("delete <id>")
@@ -282,13 +447,14 @@ function resolveGmailProvider(idOrName?: string): string | null {
 }
 
 function formatSyncResult(
-  result: { synced: number; skipped: number; errors: string[]; done: boolean },
+  result: { synced: number; skipped: number; attachments_saved?: number; errors: string[]; done: boolean },
   all?: boolean,
 ): string {
   const lines: string[] = [chalk.bold("\nSync complete:")];
-  lines.push(`  Synced:  ${chalk.green(String(result.synced))}`);
-  lines.push(`  Skipped: ${result.skipped > 0 ? chalk.dim(String(result.skipped)) : "0"} (already in DB)`);
-  if (result.errors.length > 0) lines.push(`  Errors:  ${chalk.red(String(result.errors.length))}`);
+  lines.push(`  Synced:      ${chalk.green(String(result.synced))}`);
+  lines.push(`  Skipped:     ${result.skipped > 0 ? chalk.dim(String(result.skipped)) : "0"} (already in DB)`);
+  if ((result.attachments_saved ?? 0) > 0) lines.push(`  Attachments: ${chalk.cyan(String(result.attachments_saved))} files saved`);
+  if (result.errors.length > 0) lines.push(`  Errors:      ${chalk.red(String(result.errors.length))}`);
   if (!result.done && !all) lines.push(chalk.dim("  More pages available. Use --all to sync everything."));
   lines.push("");
   return lines.join("\n");
