@@ -1224,6 +1224,7 @@ server.tool(
           text: JSON.stringify({
             synced: result.synced,
             skipped: result.skipped,
+            attachments_saved: result.attachments_saved,
             errors: result.errors,
             done: result.done,
             nextPageToken: result.nextPageToken,

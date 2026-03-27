@@ -7,17 +7,29 @@ import { getDatabase, resetDatabase, closeDatabase, uuid } from "../../db/databa
 import { storeInboundEmail, listInboundEmails, getInboundEmail, getInboundCount, clearInboundEmails } from "../../db/inbound.js";
 import { getGmailSyncState, updateLastSynced, setGmailSyncState } from "../../db/gmail-sync-state.js";
 
-// ─── Mock @hasna/connectors before any gmail-sync imports ─────────────────────
+// ─── Mock @hasna/connect-gmail before any gmail-sync imports ─────────────────
 
-const mockRunConnectorCommand = mock(async (_name: string, _args: string[]) => ({
-  success: true,
-  stdout: "[]",
-  stderr: "",
-  exitCode: 0,
-}));
+let mockMsgs: { id: string }[] = [];
 
-mock.module("@hasna/connectors", () => ({
-  runConnectorCommand: mockRunConnectorCommand,
+const mockGmail = {
+  messages: {
+    list: mock(async () => ({ messages: mockMsgs })),
+    get: mock(async (id: string) => ({
+      id,
+      payload: { headers: [
+        { name: "From", value: "a@b.com" }, { name: "To", value: "me@b.com" },
+        { name: "Subject", value: "S" }, { name: "Date", value: "Fri, 20 Mar 2026 10:00:00 +0000" },
+      ]},
+      sizeEstimate: 100, __textBody: "body", __htmlBody: "<p>body</p>",
+    })),
+    extractBody: mock((msg: Record<string, unknown>, preferHtml: boolean) =>
+      (preferHtml ? msg["__htmlBody"] : msg["__textBody"]) as string ?? ""),
+  },
+  attachments: { list: mock(async () => []), downloadAll: mock(async () => []) },
+};
+
+mock.module("@hasna/connect-gmail", () => ({
+  Gmail: { createWithTokens: mock(() => mockGmail), create: mock(() => mockGmail) },
 }));
 
 const { syncGmailInbox } = await import("../../lib/gmail-sync.js");
@@ -29,7 +41,11 @@ function setupDb() {
   process.env["EMAILS_DB_PATH"] = ":memory:";
   const db = getDatabase();
   const providerId = uuid();
-  db.run(`INSERT INTO providers (id, name, type, active) VALUES (?, 'Gmail Test', 'gmail', 1)`, [providerId]);
+  db.run(
+    `INSERT INTO providers (id, name, type, oauth_client_id, oauth_client_secret, oauth_refresh_token, active)
+     VALUES (?, 'Gmail Test', 'gmail', 'cid', 'csec', 'rtoken', 1)`,
+    [providerId],
+  );
   return { db, providerId };
 }
 
@@ -48,6 +64,7 @@ function seedInboundEmails(providerId: string, count: number) {
       text_body: `Body content for email ${i}`,
       html_body: null,
       attachments: [],
+      attachment_paths: [],
       headers: {},
       raw_size: 100,
       received_at: new Date(2026, 2, 20 - i).toISOString(),
@@ -58,7 +75,18 @@ function seedInboundEmails(providerId: string, count: number) {
 }
 
 beforeEach(() => {
-  mockRunConnectorCommand.mockReset();
+  mockMsgs = [];
+  mockGmail.messages.list.mockReset();
+  mockGmail.messages.get.mockReset();
+  mockGmail.messages.list.mockImplementation(async () => ({ messages: mockMsgs }));
+  mockGmail.messages.get.mockImplementation(async (id: string) => ({
+    id,
+    payload: { headers: [
+      { name: "From", value: "a@b.com" }, { name: "To", value: "me@b.com" },
+      { name: "Subject", value: "S" }, { name: "Date", value: "Fri, 20 Mar 2026 10:00:00 +0000" },
+    ]},
+    sizeEstimate: 100, __textBody: "body", __htmlBody: "<p>body</p>",
+  }));
 });
 
 afterEach(() => {
@@ -103,6 +131,7 @@ describe("inbox list — listInboundEmails", () => {
       text_body: "Other body",
       html_body: null,
       attachments: [],
+      attachment_paths: [],
       headers: {},
       raw_size: 50,
       received_at: new Date().toISOString(),
@@ -183,26 +212,31 @@ describe("inbox search — local filter", () => {
 // ─── inbox sync (via syncGmailInbox) ─────────────────────────────────────────
 
 describe("inbox sync — syncGmailInbox", () => {
-  const MOCK_LIST = `[
-    {"id":"cli-msg1","from":"a@test.com","subject":"CLI Test 1","date":"Fri, 20 Mar 2026 10:00:00 +0000"},
-    {"id":"cli-msg2","from":"b@test.com","subject":"CLI Test 2","date":"Fri, 20 Mar 2026 11:00:00 +0000"}
-  ]`;
-  const MOCK_READ1 = `{"id":"cli-msg1","from":"a@test.com","to":"me@test.com","subject":"CLI Test 1","date":"Fri, 20 Mar 2026 10:00:00 +0000","body":"Body A"}`;
-  const MOCK_READ2 = `{"id":"cli-msg2","from":"b@test.com","to":"me@test.com","subject":"CLI Test 2","date":"Fri, 20 Mar 2026 11:00:00 +0000","body":"Body B"}`;
-
-  function setupMock() {
-    let readIdx = 0;
-    mockRunConnectorCommand.mockImplementation(async (_n: string, args: string[]) => {
-      if (args.includes("read")) {
-        return { success: true, stdout: [MOCK_READ1, MOCK_READ2][readIdx++] ?? "{}", stderr: "", exitCode: 0 };
-      }
-      return { success: true, stdout: MOCK_LIST, stderr: "", exitCode: 0 };
+  function setupMock(msgs: { id: string; subject?: string; from?: string; body?: string }[]) {
+    mockMsgs = msgs.map(m => ({ id: m.id }));
+    mockGmail.messages.get.mockImplementation(async (id: string) => {
+      const m = msgs.find(x => x.id === id) ?? { id, subject: "S", from: "a@b.com", body: "body" };
+      return {
+        id,
+        payload: { headers: [
+          { name: "From", value: m.from ?? "a@b.com" },
+          { name: "To", value: "me@test.com" },
+          { name: "Subject", value: m.subject ?? "S" },
+          { name: "Date", value: "Fri, 20 Mar 2026 10:00:00 +0000" },
+        ]},
+        sizeEstimate: 200,
+        __textBody: m.body ?? "body",
+        __htmlBody: `<p>${m.body ?? "body"}</p>`,
+      };
     });
   }
 
   it("syncs messages and they appear in listInboundEmails", async () => {
     const { db, providerId } = setupDb();
-    setupMock();
+    setupMock([
+      { id: "cli-msg1", subject: "CLI Test 1", from: "a@test.com", body: "Body A" },
+      { id: "cli-msg2", subject: "CLI Test 2", from: "b@test.com", body: "Body B" },
+    ]);
 
     const result = await syncGmailInbox({ providerId, db });
     expect(result.synced).toBe(2);
@@ -214,7 +248,7 @@ describe("inbox sync — syncGmailInbox", () => {
 
   it("getInboundCount reflects synced messages", async () => {
     const { db, providerId } = setupDb();
-    setupMock();
+    setupMock([{ id: "m1" }, { id: "m2" }]);
 
     await syncGmailInbox({ providerId, db });
     expect(getInboundCount(providerId, db)).toBe(2);
@@ -222,7 +256,7 @@ describe("inbox sync — syncGmailInbox", () => {
 
   it("getInboundEmail retrieves synced message by id", async () => {
     const { db, providerId } = setupDb();
-    setupMock();
+    setupMock([{ id: "m1" }]);
 
     await syncGmailInbox({ providerId, db });
     const emails = listInboundEmails({ provider_id: providerId }, db);
@@ -233,7 +267,7 @@ describe("inbox sync — syncGmailInbox", () => {
 
   it("clearInboundEmails removes synced messages", async () => {
     const { db, providerId } = setupDb();
-    setupMock();
+    setupMock([{ id: "m1" }, { id: "m2" }]);
 
     await syncGmailInbox({ providerId, db });
     expect(getInboundCount(providerId, db)).toBe(2);

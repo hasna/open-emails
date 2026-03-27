@@ -112,20 +112,29 @@ export function registerInboxCommands(program: Command, output: (data: unknown, 
         const limit = parseInt(opts.limit ?? "20", 10);
 
         if (opts.remote) {
-          // Live Gmail search via connector
-          const { runConnectorCommand } = await import("@hasna/connectors");
-          const { parseJsonFromOutput } = await import("../../lib/gmail-sync.js");
-          const r = await runConnectorCommand("gmail", ["-f", "json", "search", "query", query]);
-          if (!r.success) {
-            console.error(chalk.red(`Gmail search failed: ${r.stderr}`));
+          // Live Gmail search via SDK
+          const { Gmail } = await import("@hasna/connect-gmail");
+          const { getProvider } = await import("../../db/providers.js");
+          const providerId = resolveGmailProvider(opts.provider);
+          if (!providerId) {
+            console.error(chalk.red("No Gmail provider found."));
             process.exit(1);
           }
-          try {
-            const results = parseJsonFromOutput(r.stdout) as { id: string; from: string; subject: string; date: string }[];
-            output(results, formatRemoteResults(results, query));
-          } catch {
-            console.log(r.stdout);
+          const provider = getProvider(providerId, db);
+          if (!provider) {
+            console.error(chalk.red(`Provider not found: ${providerId}`));
+            process.exit(1);
           }
+          const gmail = Gmail.createWithTokens({
+            accessToken: provider.oauth_access_token ?? "",
+            refreshToken: provider.oauth_refresh_token ?? "",
+            clientId: provider.oauth_client_id ?? "",
+            clientSecret: provider.oauth_client_secret ?? "",
+            expiresAt: provider.oauth_token_expiry ? new Date(provider.oauth_token_expiry).getTime() : undefined,
+          });
+          const listRes = await gmail.messages.list({ q: query, maxResults: parseInt(opts.limit ?? "20", 10) });
+          const results = (listRes.messages ?? []).map((m) => ({ id: m.id ?? "", from: "", subject: "", date: "" }));
+          output(results, formatRemoteResults(results, query));
           return;
         }
 
@@ -182,11 +191,17 @@ export function registerInboxCommands(program: Command, output: (data: unknown, 
   inboxCmd
     .command("labels")
     .description("List available Gmail labels for the connected account")
-    .action(async () => {
+    .option("--provider <id>", "Provider ID (defaults to first active Gmail provider)")
+    .action(async (opts: { provider?: string }) => {
       try {
-        const labels = await listGmailLabels();
+        const providerId = resolveGmailProvider(opts.provider);
+        if (!providerId) {
+          console.error(chalk.red("No Gmail provider found. Add one with: emails provider add-gmail"));
+          process.exit(1);
+        }
+        const labels = await listGmailLabels(providerId);
         if (labels.length === 0) {
-          console.log(chalk.dim("No labels found. Is Gmail authenticated? Run: connect-gmail auth status"));
+          console.log(chalk.dim("No labels found. Is this Gmail provider authenticated?"));
           return;
         }
         console.log(chalk.bold("\nGmail Labels:"));
