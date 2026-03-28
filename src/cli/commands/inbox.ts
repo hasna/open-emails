@@ -1,7 +1,7 @@
 import type { Command } from "commander";
 import chalk from "chalk";
 import { Gmail as Gmail_ } from "@hasna/connect-gmail";
-import { syncGmailInbox, syncGmailInboxAll, listGmailLabels } from "../../lib/gmail-sync.js";
+import { syncGmailInbox, listGmailLabels } from "../../lib/gmail-sync.js";
 import { listInboundEmails, getInboundEmail, deleteInboundEmail, clearInboundEmails, getInboundCount } from "../../db/inbound.js";
 import { getGmailSyncState, updateLastSynced } from "../../db/gmail-sync-state.js";
 import { listProviders } from "../../db/providers.js";
