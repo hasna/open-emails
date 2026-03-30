@@ -7,30 +7,25 @@ import { getDatabase, resetDatabase, closeDatabase, uuid } from "../../db/databa
 import { storeInboundEmail, listInboundEmails, getInboundEmail, getInboundCount, clearInboundEmails } from "../../db/inbound.js";
 import { getGmailSyncState, updateLastSynced, setGmailSyncState } from "../../db/gmail-sync-state.js";
 
-// ─── Mock @hasna/connect-gmail before any gmail-sync imports ─────────────────
+// ─── Mock @hasna/connectors before any gmail-sync imports ─────────────────────
 
-let mockMsgs: { id: string }[] = [];
+const DATE = "Fri, 20 Mar 2026 10:00:00 +0000";
+let mockListMsgs: { id: string; subject?: string; from?: string }[] = [];
 
-const mockGmail = {
-  messages: {
-    list: mock(async () => ({ messages: mockMsgs })),
-    get: mock(async (id: string) => ({
-      id,
-      payload: { headers: [
-        { name: "From", value: "a@b.com" }, { name: "To", value: "me@b.com" },
-        { name: "Subject", value: "S" }, { name: "Date", value: "Fri, 20 Mar 2026 10:00:00 +0000" },
-      ]},
-      sizeEstimate: 100, __textBody: "body", __htmlBody: "<p>body</p>",
-    })),
-    extractBody: mock((msg: Record<string, unknown>, preferHtml: boolean) =>
-      (preferHtml ? msg["__htmlBody"] : msg["__textBody"]) as string ?? ""),
-  },
-  attachments: { list: mock(async () => []), downloadAll: mock(async () => []) },
-};
+const mockRun = mock(async (_n: string, args: string[]) => {
+  const a = args as string[];
+  if (a.includes("list")) {
+    return { success: true, stdout: JSON.stringify(mockListMsgs.map((m) => ({ id: m.id, from: m.from ?? "a@b.com", subject: m.subject ?? "S", date: DATE }))), stderr: "", exitCode: 0 };
+  }
+  if (a.includes("read") || a.includes("get")) {
+    const id = a.find((x) => x.length > 5 && !x.startsWith("-")) ?? "x";
+    const m = mockListMsgs.find((x) => x.id === id);
+    return { success: true, stdout: JSON.stringify({ id, from: m?.from ?? "a@b.com", to: "me@b.com", subject: m?.subject ?? "S", date: DATE, body: "body", htmlBody: "<p>body</p>", size: 100 }), stderr: "", exitCode: 0 };
+  }
+  return { success: true, stdout: "[]", stderr: "", exitCode: 0 };
+});
 
-mock.module("@hasna/connect-gmail", () => ({
-  Gmail: { createWithTokens: mock(() => mockGmail), create: mock(() => mockGmail) },
-}));
+mock.module("@hasna/connectors", () => ({ runConnectorCommand: mockRun }));
 
 const { syncGmailInbox } = await import("../../lib/gmail-sync.js");
 
@@ -41,11 +36,7 @@ function setupDb() {
   process.env["EMAILS_DB_PATH"] = ":memory:";
   const db = getDatabase();
   const providerId = uuid();
-  db.run(
-    `INSERT INTO providers (id, name, type, oauth_client_id, oauth_client_secret, oauth_refresh_token, active)
-     VALUES (?, 'Gmail Test', 'gmail', 'cid', 'csec', 'rtoken', 1)`,
-    [providerId],
-  );
+  db.run(`INSERT INTO providers (id, name, type, active) VALUES (?, 'Gmail Test', 'gmail', 1)`, [providerId]);
   return { db, providerId };
 }
 
@@ -75,18 +66,19 @@ function seedInboundEmails(providerId: string, count: number) {
 }
 
 beforeEach(() => {
-  mockMsgs = [];
-  mockGmail.messages.list.mockReset();
-  mockGmail.messages.get.mockReset();
-  mockGmail.messages.list.mockImplementation(async () => ({ messages: mockMsgs }));
-  mockGmail.messages.get.mockImplementation(async (id: string) => ({
-    id,
-    payload: { headers: [
-      { name: "From", value: "a@b.com" }, { name: "To", value: "me@b.com" },
-      { name: "Subject", value: "S" }, { name: "Date", value: "Fri, 20 Mar 2026 10:00:00 +0000" },
-    ]},
-    sizeEstimate: 100, __textBody: "body", __htmlBody: "<p>body</p>",
-  }));
+  mockListMsgs = [];
+  mockRun.mockReset();
+  mockRun.mockImplementation(async (_n: string, args: string[]) => {
+    const a = args as string[];
+    if (a.includes("list")) return { success: true, stdout: JSON.stringify(mockListMsgs.map((m) => ({ id: m.id, from: m.from ?? "a@b.com", subject: m.subject ?? "S", date: DATE }))), stderr: "", exitCode: 0 };
+    if (a.includes("read") || a.includes("get")) {
+      const idx = Math.max(a.indexOf("read"), a.indexOf("get"));
+      const id = a[idx + 1] ?? "x";
+      const m = mockListMsgs.find((x) => x.id === id);
+      return { success: true, stdout: JSON.stringify({ id, from: m?.from ?? "a@b.com", to: "me@b.com", subject: m?.subject ?? "S", date: DATE, body: "body", htmlBody: "<p>body</p>", size: 100 }), stderr: "", exitCode: 0 };
+    }
+    return { success: true, stdout: "[]", stderr: "", exitCode: 0 };
+  });
 });
 
 afterEach(() => {
@@ -212,52 +204,26 @@ describe("inbox search — local filter", () => {
 // ─── inbox sync (via syncGmailInbox) ─────────────────────────────────────────
 
 describe("inbox sync — syncGmailInbox", () => {
-  function setupMock(msgs: { id: string; subject?: string; from?: string; body?: string }[]) {
-    mockMsgs = msgs.map(m => ({ id: m.id }));
-    mockGmail.messages.get.mockImplementation(async (id: string) => {
-      const m = msgs.find(x => x.id === id) ?? { id, subject: "S", from: "a@b.com", body: "body" };
-      return {
-        id,
-        payload: { headers: [
-          { name: "From", value: m.from ?? "a@b.com" },
-          { name: "To", value: "me@test.com" },
-          { name: "Subject", value: m.subject ?? "S" },
-          { name: "Date", value: "Fri, 20 Mar 2026 10:00:00 +0000" },
-        ]},
-        sizeEstimate: 200,
-        __textBody: m.body ?? "body",
-        __htmlBody: `<p>${m.body ?? "body"}</p>`,
-      };
-    });
-  }
-
   it("syncs messages and they appear in listInboundEmails", async () => {
     const { db, providerId } = setupDb();
-    setupMock([
-      { id: "cli-msg1", subject: "CLI Test 1", from: "a@test.com", body: "Body A" },
-      { id: "cli-msg2", subject: "CLI Test 2", from: "b@test.com", body: "Body B" },
-    ]);
-
+    mockListMsgs = [{ id: "cli-msg1", subject: "CLI Test 1", from: "a@test.com" }, { id: "cli-msg2", subject: "CLI Test 2", from: "b@test.com" }];
     const result = await syncGmailInbox({ providerId, db });
     expect(result.synced).toBe(2);
-
     const stored = listInboundEmails({ provider_id: providerId });
     expect(stored).toHaveLength(2);
-    expect(stored.map(e => e.subject).sort()).toEqual(["CLI Test 1", "CLI Test 2"]);
+    expect(stored.map((e) => e.subject).sort()).toEqual(["CLI Test 1", "CLI Test 2"]);
   });
 
   it("getInboundCount reflects synced messages", async () => {
     const { db, providerId } = setupDb();
-    setupMock([{ id: "m1" }, { id: "m2" }]);
-
+    mockListMsgs = [{ id: "m1" }, { id: "m2" }];
     await syncGmailInbox({ providerId, db });
     expect(getInboundCount(providerId, db)).toBe(2);
   });
 
   it("getInboundEmail retrieves synced message by id", async () => {
     const { db, providerId } = setupDb();
-    setupMock([{ id: "m1" }]);
-
+    mockListMsgs = [{ id: "m1" }];
     await syncGmailInbox({ providerId, db });
     const emails = listInboundEmails({ provider_id: providerId }, db);
     const fetched = getInboundEmail(emails[0]!.id, db);
@@ -267,11 +233,9 @@ describe("inbox sync — syncGmailInbox", () => {
 
   it("clearInboundEmails removes synced messages", async () => {
     const { db, providerId } = setupDb();
-    setupMock([{ id: "m1" }, { id: "m2" }]);
-
+    mockListMsgs = [{ id: "m1" }, { id: "m2" }];
     await syncGmailInbox({ providerId, db });
     expect(getInboundCount(providerId, db)).toBe(2);
-
     clearInboundEmails(providerId, db);
     expect(getInboundCount(providerId, db)).toBe(0);
   });

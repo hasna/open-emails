@@ -1237,35 +1237,23 @@ server.tool(
   },
 );
 
-async function gmailMessageAction(
-  email_id: string,
-  provider_id: string,
-  action: (gmail: Awaited<ReturnType<(typeof import("@hasna/connect-gmail"))["Gmail"]["createWithTokens"]>>, msgId: string) => Promise<unknown>,
-): Promise<string> {
+async function gmailMessageAction(email_id: string, connectorArgs: string[]): Promise<string> {
   const db = getDatabase();
   const row = db.query("SELECT message_id FROM inbound_emails WHERE id = ?").get(email_id) as { message_id: string } | null;
   if (!row?.message_id) throw new Error(`No Gmail message ID for email ${email_id}`);
-  const provider = getProvider(resolveId("providers", provider_id));
-  if (!provider) throw new ProviderNotFoundError(provider_id);
-  const { Gmail } = await import("@hasna/connect-gmail");
-  const gmail = Gmail.createWithTokens({
-    accessToken: provider.oauth_access_token ?? "",
-    refreshToken: provider.oauth_refresh_token ?? "",
-    clientId: provider.oauth_client_id ?? "",
-    clientSecret: provider.oauth_client_secret ?? "",
-    expiresAt: provider.oauth_token_expiry ? new Date(provider.oauth_token_expiry).getTime() : undefined,
-  });
-  await action(gmail, row.message_id);
+  const { runConnectorCommand } = await import("@hasna/connectors");
+  const r = await runConnectorCommand("gmail", [...connectorArgs, row.message_id]);
+  if (!r.success) throw new Error(r.stderr || r.stdout);
   return row.message_id;
 }
 
 server.tool(
   "mark_email_read",
   "Mark a synced inbound Gmail email as read",
-  { email_id: z.string(), provider_id: z.string() },
-  async ({ email_id, provider_id }) => {
+  { email_id: z.string() },
+  async ({ email_id }) => {
     try {
-      await gmailMessageAction(email_id, provider_id, (g, id) => g.messages.markAsRead(id));
+      await gmailMessageAction(email_id, ["messages", "mark-read"]);
       return { content: [{ type: "text", text: `Marked as read: ${email_id}` }] };
     } catch (e) { return { content: [{ type: "text", text: `Error: ${formatError(e)}` }], isError: true }; }
   },
@@ -1274,10 +1262,10 @@ server.tool(
 server.tool(
   "archive_email",
   "Archive a synced inbound Gmail email (removes from INBOX)",
-  { email_id: z.string(), provider_id: z.string() },
-  async ({ email_id, provider_id }) => {
+  { email_id: z.string() },
+  async ({ email_id }) => {
     try {
-      await gmailMessageAction(email_id, provider_id, (g, id) => g.messages.archive(id));
+      await gmailMessageAction(email_id, ["messages", "archive"]);
       return { content: [{ type: "text", text: `Archived: ${email_id}` }] };
     } catch (e) { return { content: [{ type: "text", text: `Error: ${formatError(e)}` }], isError: true }; }
   },
@@ -1286,10 +1274,10 @@ server.tool(
 server.tool(
   "star_email",
   "Star a synced inbound Gmail email",
-  { email_id: z.string(), provider_id: z.string() },
-  async ({ email_id, provider_id }) => {
+  { email_id: z.string() },
+  async ({ email_id }) => {
     try {
-      await gmailMessageAction(email_id, provider_id, (g, id) => g.messages.star(id));
+      await gmailMessageAction(email_id, ["messages", "star"]);
       return { content: [{ type: "text", text: `Starred: ${email_id}` }] };
     } catch (e) { return { content: [{ type: "text", text: `Error: ${formatError(e)}` }], isError: true }; }
   },
@@ -1301,30 +1289,19 @@ server.tool(
   {
     email_id: z.string().describe("Inbound email ID (from local DB)"),
     body: z.string().describe("Reply body text"),
-    provider_id: z.string().describe("Gmail provider ID"),
-    is_html: z.boolean().optional().describe("Treat body as HTML (default: false)"),
+    is_html: z.boolean().optional().describe("Send as HTML email (default: false)"),
   },
-  async ({ email_id, body, provider_id, is_html }) => {
+  async ({ email_id, body, is_html }) => {
     try {
       const db = getDatabase();
       const row = db.query("SELECT message_id, subject FROM inbound_emails WHERE id = ?").get(email_id) as { message_id: string; subject: string } | null;
-      if (!row) throw new Error(`Inbound email not found: ${email_id}`);
-      if (!row.message_id) throw new Error("Email has no Gmail message ID");
-
-      const provider = getProvider(resolveId("providers", provider_id));
-      if (!provider) throw new ProviderNotFoundError(provider_id);
-
-      const { Gmail } = await import("@hasna/connect-gmail");
-      const gmail = Gmail.createWithTokens({
-        accessToken: provider.oauth_access_token ?? "",
-        refreshToken: provider.oauth_refresh_token ?? "",
-        clientId: provider.oauth_client_id ?? "",
-        clientSecret: provider.oauth_client_secret ?? "",
-        expiresAt: provider.oauth_token_expiry ? new Date(provider.oauth_token_expiry).getTime() : undefined,
-      });
-
-      const sent = await gmail.messages.reply(row.message_id, { body, isHtml: is_html ?? false });
-      return { content: [{ type: "text", text: JSON.stringify({ sent_id: sent.id, replied_to: row.subject }, null, 2) }] };
+      if (!row?.message_id) throw new Error(`Email not found or no Gmail message ID: ${email_id}`);
+      const { runConnectorCommand } = await import("@hasna/connectors");
+      const args = ["messages", "reply", row.message_id, "--body", body];
+      if (is_html) args.push("--html");
+      const r = await runConnectorCommand("gmail", args);
+      if (!r.success) throw new Error(r.stderr || r.stdout);
+      return { content: [{ type: "text", text: JSON.stringify({ replied_to: row.subject, status: "sent" }, null, 2) }] };
     } catch (e) {
       return { content: [{ type: "text", text: `Error: ${formatError(e)}` }], isError: true };
     }

@@ -264,16 +264,16 @@ export function registerProviderCommands(program: Command, output: (data: unknow
     .command("add-gmail")
     .description("Add a Gmail provider from saved connector tokens")
     .option("--name <name>", "Provider name (defaults to Gmail profile name)")
-    .option("--profile <profile>", "connect-gmail profile to use", "default")
-    .option("--list-profiles", "List available connect-gmail profiles and exit")
+    .option("--profile <profile>", "Connector Gmail profile to use (default: \"default\")", "default")
+    .option("--list-profiles", "List available Gmail profiles and exit")
     .action(async (opts: { name?: string; profile?: string; listProfiles?: boolean }) => {
       try {
         const HOME = process.env["HOME"] || process.env["USERPROFILE"] || "~";
-        const profilesDir = join(HOME, ".connect", "connect-gmail", "profiles");
+        const profilesDir = join(HOME, ".connectors", "connect-gmail", "profiles");
 
         if (opts.listProfiles) {
           if (!existsSync(profilesDir)) {
-            console.log(chalk.dim("No Gmail profiles found. Run: connect-gmail auth login"));
+            console.log(chalk.dim("No Gmail profiles found. Run: connectors auth gmail"));
             return;
           }
           const profiles = readdirSync(profilesDir).filter(
@@ -290,7 +290,7 @@ export function registerProviderCommands(program: Command, output: (data: unknow
 
         if (!existsSync(tokensPath)) {
           console.error(chalk.red(`No tokens found for profile "${profile}" at ${tokensPath}`));
-          console.error(chalk.dim("Run: connect-gmail auth login"));
+          console.error(chalk.dim("Run: connectors auth gmail"));
           process.exit(1);
         }
 
@@ -301,7 +301,7 @@ export function registerProviderCommands(program: Command, output: (data: unknow
         };
 
         if (!tokens.refreshToken) {
-          console.error(chalk.red("Tokens file missing refreshToken. Re-authenticate with: connect-gmail auth login"));
+          console.error(chalk.red("Tokens file missing refreshToken. Re-authenticate with: connectors auth gmail"));
           process.exit(1);
         }
 

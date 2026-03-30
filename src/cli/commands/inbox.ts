@@ -1,6 +1,6 @@
 import type { Command } from "commander";
 import chalk from "chalk";
-import { Gmail as Gmail_ } from "@hasna/connect-gmail";
+import { runConnectorCommand } from "@hasna/connectors";
 import { syncGmailInbox, listGmailLabels } from "../../lib/gmail-sync.js";
 import { listInboundEmails, getInboundEmail, deleteInboundEmail, clearInboundEmails, getInboundCount } from "../../db/inbound.js";
 import { getGmailSyncState, updateLastSynced } from "../../db/gmail-sync-state.js";
@@ -140,29 +140,21 @@ export function registerInboxCommands(program: Command, output: (data: unknown, 
         const limit = parseInt(opts.limit ?? "20", 10);
 
         if (opts.remote) {
-          // Live Gmail search via SDK
-          const { Gmail } = await import("@hasna/connect-gmail");
-          const { getProvider } = await import("../../db/providers.js");
-          const providerId = resolveGmailProvider(opts.provider);
-          if (!providerId) {
-            console.error(chalk.red("No Gmail provider found."));
+          // Live Gmail search via connectors SDK
+          const r = await runConnectorCommand("gmail", ["-f", "json", "messages", "list", "--query", query, "--max", opts.limit ?? "20"]);
+          if (!r.success) {
+            console.error(chalk.red(`Gmail search failed: ${r.stderr}`));
             process.exit(1);
           }
-          const provider = getProvider(providerId, db);
-          if (!provider) {
-            console.error(chalk.red(`Provider not found: ${providerId}`));
-            process.exit(1);
+          try {
+            const { parseJsonFromOutput } = await import("../../lib/gmail-sync.js");
+            const raw = parseJsonFromOutput(r.stdout);
+            const msgs = Array.isArray(raw) ? raw : (raw as { messages?: { id: string; from: string; subject: string; date: string }[] }).messages ?? [];
+            const results = msgs as { id: string; from: string; subject: string; date: string }[];
+            output(results, formatRemoteResults(results, query));
+          } catch {
+            console.log(r.stdout);
           }
-          const gmail = Gmail.createWithTokens({
-            accessToken: provider.oauth_access_token ?? "",
-            refreshToken: provider.oauth_refresh_token ?? "",
-            clientId: provider.oauth_client_id ?? "",
-            clientSecret: provider.oauth_client_secret ?? "",
-            expiresAt: provider.oauth_token_expiry ? new Date(provider.oauth_token_expiry).getTime() : undefined,
-          });
-          const listRes = await gmail.messages.list({ q: query, maxResults: parseInt(opts.limit ?? "20", 10) });
-          const results = (listRes.messages ?? []).map((m) => ({ id: m.id ?? "", from: "", subject: "", date: "" }));
-          output(results, formatRemoteResults(results, query));
           return;
         }
 
@@ -262,54 +254,37 @@ export function registerInboxCommands(program: Command, output: (data: unknown, 
 
   // ─── GMAIL ACTIONS ────────────────────────────────────────────────────────
 
-  async function gmailAction(emailId: string, providerOpt: string | undefined, action: (gmail: ReturnType<typeof Gmail_["createWithTokens"]>, msgId: string) => Promise<void>, label: string) {
+  async function gmailAction(emailId: string, connectorArgs: string[], label: string) {
     const db = getDatabase();
     const row = db.query("SELECT message_id FROM inbound_emails WHERE id = ?").get(emailId) as { message_id: string } | null;
     if (!row?.message_id) throw new Error(`No Gmail message ID for email ${emailId}`);
-    const providerId = resolveGmailProvider(providerOpt);
-    if (!providerId) throw new Error("No Gmail provider found");
-    const { getProvider } = await import("../../db/providers.js");
-    const provider = getProvider(providerId, db);
-    if (!provider) throw new Error(`Provider not found: ${providerId}`);
-    const gmail = Gmail_.createWithTokens({
-      accessToken: provider.oauth_access_token ?? "",
-      refreshToken: provider.oauth_refresh_token ?? "",
-      clientId: provider.oauth_client_id ?? "",
-      clientSecret: provider.oauth_client_secret ?? "",
-      expiresAt: provider.oauth_token_expiry ? new Date(provider.oauth_token_expiry).getTime() : undefined,
-    });
-    await action(gmail, row.message_id);
+    const r = await runConnectorCommand("gmail", [...connectorArgs, row.message_id]);
+    if (!r.success) throw new Error(r.stderr || r.stdout);
     console.log(chalk.green(`✓ ${label}: ${emailId.slice(0, 8)}`));
   }
 
   inboxCmd
     .command("mark-read <emailId>")
     .description("Mark a Gmail message as read")
-    .option("--provider <id>", "Provider ID")
-    .action(async (emailId: string, opts: { provider?: string }) => {
-      try {
-        await gmailAction(emailId, opts.provider, (g, id) => g.messages.markAsRead(id), "Marked as read");
-      } catch (e) { handleError(e); }
+    .action(async (emailId: string) => {
+      try { await gmailAction(emailId, ["messages", "mark-read"], "Marked as read"); }
+      catch (e) { handleError(e); }
     });
 
   inboxCmd
     .command("archive <emailId>")
     .description("Archive a Gmail message (remove from INBOX)")
-    .option("--provider <id>", "Provider ID")
-    .action(async (emailId: string, opts: { provider?: string }) => {
-      try {
-        await gmailAction(emailId, opts.provider, (g, id) => g.messages.archive(id), "Archived");
-      } catch (e) { handleError(e); }
+    .action(async (emailId: string) => {
+      try { await gmailAction(emailId, ["messages", "archive"], "Archived"); }
+      catch (e) { handleError(e); }
     });
 
   inboxCmd
     .command("star <emailId>")
     .description("Star a Gmail message")
-    .option("--provider <id>", "Provider ID")
-    .action(async (emailId: string, opts: { provider?: string }) => {
-      try {
-        await gmailAction(emailId, opts.provider, (g, id) => g.messages.star(id), "Starred");
-      } catch (e) { handleError(e); }
+    .action(async (emailId: string) => {
+      try { await gmailAction(emailId, ["messages", "star"], "Starred"); }
+      catch (e) { handleError(e); }
     });
 
   // ─── REPLY ────────────────────────────────────────────────────────────────
@@ -317,52 +292,23 @@ export function registerInboxCommands(program: Command, output: (data: unknown, 
     .command("reply <emailId>")
     .description("Reply to a synced inbound email via Gmail")
     .requiredOption("--body <text>", "Reply body text")
-    .option("--provider <id>", "Provider ID (defaults to first active Gmail provider)")
-    .option("--html", "Treat body as HTML")
-    .action(async (emailId: string, opts: { body: string; provider?: string; html?: boolean }) => {
+    .option("--html", "Send as HTML email")
+    .action(async (emailId: string, opts: { body: string; html?: boolean }) => {
       try {
         const db = getDatabase();
-        const email = (db.query("SELECT * FROM inbound_emails WHERE id = ?").get(emailId)) as { message_id: string; subject: string; from_address: string } | null;
-        if (!email) {
-          console.error(chalk.red(`Email not found: ${emailId}`));
+        const email = db.query("SELECT message_id, subject FROM inbound_emails WHERE id = ?").get(emailId) as { message_id: string; subject: string } | null;
+        if (!email?.message_id) {
+          console.error(chalk.red("Email not found or has no Gmail message ID."));
           process.exit(1);
         }
-        if (!email.message_id) {
-          console.error(chalk.red("This email has no Gmail message ID — cannot reply."));
-          process.exit(1);
-        }
-
-        const providerId = resolveGmailProvider(opts.provider);
-        if (!providerId) {
-          console.error(chalk.red("No Gmail provider found."));
-          process.exit(1);
-        }
-        const { getProvider } = await import("../../db/providers.js");
-        const { Gmail } = await import("@hasna/connect-gmail");
-        const provider = getProvider(providerId, db);
-        if (!provider) {
-          console.error(chalk.red(`Provider not found: ${providerId}`));
-          process.exit(1);
-        }
-
-        const gmail = Gmail.createWithTokens({
-          accessToken: provider.oauth_access_token ?? "",
-          refreshToken: provider.oauth_refresh_token ?? "",
-          clientId: provider.oauth_client_id ?? "",
-          clientSecret: provider.oauth_client_secret ?? "",
-          expiresAt: provider.oauth_token_expiry ? new Date(provider.oauth_token_expiry).getTime() : undefined,
-        });
-
+        const args = ["messages", "reply", email.message_id, "--body", opts.body];
+        if (opts.html) args.push("--html");
         console.log(chalk.dim(`Replying to: ${email.subject}`));
-        const sent = await gmail.messages.reply(email.message_id, {
-          body: opts.body,
-          isHtml: opts.html ?? false,
-        });
-        console.log(chalk.green(`✓ Reply sent (message ID: ${sent.id})`));
-        output(sent, "");
-      } catch (e) {
-        handleError(e);
-      }
+        const r = await runConnectorCommand("gmail", args);
+        if (!r.success) { console.error(chalk.red(`Reply failed: ${r.stderr}`)); process.exit(1); }
+        console.log(chalk.green("✓ Reply sent"));
+        output({}, "");
+      } catch (e) { handleError(e); }
     });
 
   // ─── ATTACHMENT ───────────────────────────────────────────────────────────

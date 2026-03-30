@@ -100,21 +100,23 @@ export async function runDiagnostics(db?: Database): Promise<DoctorCheck[]> {
       return { status: "pass" as const, message: `Access token valid (~${minsLeft}min remaining)` };
     })();
 
-    // Live check — try fetching the profile
+    // Live check via connectors SDK
     try {
-      const { Gmail } = await import("@hasna/connect-gmail");
-      const gmail = Gmail.createWithTokens({
-        accessToken: p.oauth_access_token ?? "",
-        refreshToken: p.oauth_refresh_token,
-        clientId: p.oauth_client_id ?? "",
-        clientSecret: p.oauth_client_secret ?? "",
-        expiresAt: p.oauth_token_expiry ? new Date(p.oauth_token_expiry).getTime() : undefined,
-      });
-      const profile = await gmail.profile.get();
+      const { runConnectorCommand } = await import("@hasna/connectors");
+      const meResult = await runConnectorCommand("gmail", ["-f", "json", "me"]);
+      if (!meResult.success) throw new Error(meResult.stderr || meResult.stdout);
+      let emailAddress = "";
+      try {
+        const me = JSON.parse(meResult.stdout) as { emailAddress?: string };
+        emailAddress = me.emailAddress ?? "";
+      } catch {
+        const match = meResult.stdout.match(/emailAddress[:\s]+([^\s,}]+)/);
+        if (match?.[1]) emailAddress = match[1];
+      }
       checks.push({
         name: `Gmail: ${p.name}`,
         status: "pass",
-        message: `Authenticated as ${profile.emailAddress} (${expiryStatus.message})`,
+        message: `Authenticated${emailAddress ? ` as ${emailAddress}` : ""} (${expiryStatus.message})`,
       });
     } catch (e) {
       checks.push({

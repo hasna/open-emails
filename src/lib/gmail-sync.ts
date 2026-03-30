@@ -1,28 +1,25 @@
 /**
- * Gmail inbox sync via @hasna/connect-gmail SDK.
+ * Gmail inbox sync via @hasna/connectors SDK (runConnectorCommand).
  *
- * Uses Gmail.createWithTokens() to authenticate with credentials stored in the
- * open-emails providers table, bypassing the connector's file-based auth entirely.
+ * All Gmail API calls go through the connectors layer — no direct Gmail SDK.
+ * Requires connect-gmail to be authenticated via: connectors auth gmail
  *
  * Features:
- * - Full MIME fetch (text + HTML body) via messages.get(id, 'full')
- * - Attachment download (local or S3) via attachments.downloadAll()
- * - Auto token refresh with persistence back to providers table
- * - Pagination support via nextPageToken
+ * - Full message fetch with text + HTML body (--body --html flags)
+ * - Attachment download via connector attachments download --dir
+ * - Optional S3 upload after local download
+ * - Pagination via nextPageToken
  * - Dedup by (provider_id, message_id) — safe to re-run
- * - Per-message error isolation — one failure doesn't abort the whole run
+ * - Per-message error isolation
  */
 
-import { Gmail } from "@hasna/connect-gmail";
-import type { GmailTokens } from "@hasna/connect-gmail";
+import { runConnectorCommand } from "@hasna/connectors";
 import { join } from "node:path";
-import { mkdirSync } from "node:fs";
+import { mkdirSync, readdirSync, statSync } from "node:fs";
 import { storeInboundEmail, updateAttachmentPaths, listInboundEmails } from "../db/inbound.js";
 import type { AttachmentPath } from "../db/inbound.js";
-import { getProvider, updateProvider } from "../db/providers.js";
 import { getDatabase, getDataDir } from "../db/database.js";
 import { getGmailSyncConfig } from "./config.js";
-import type { Provider } from "../types/index.js";
 import type { Database } from "bun:sqlite";
 
 // ─── Types ────────────────────────────────────────────────────────────────────
@@ -57,6 +54,21 @@ export interface GmailSyncResult {
   errors: string[];
   nextPageToken?: string;
   done: boolean;
+}
+
+// ─── JSON parsing ─────────────────────────────────────────────────────────────
+
+export function parseJsonFromOutput(output: string): unknown {
+  const jsonStart = output.indexOf("[");
+  const objStart = output.indexOf("{");
+  let start = -1;
+  if (jsonStart >= 0 && (objStart < 0 || jsonStart <= objStart)) {
+    start = jsonStart;
+  } else if (objStart >= 0) {
+    start = objStart;
+  }
+  if (start < 0) throw new Error(`No JSON found in connector output: ${output.slice(0, 200)}`);
+  return JSON.parse(output.slice(start));
 }
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
@@ -94,48 +106,11 @@ function getAttachmentDir(emailId: string): string {
   return dir;
 }
 
-/**
- * Build a Gmail SDK instance from a provider record.
- * Tokens are refreshed automatically; new tokens are persisted back to the DB.
- */
-function makeGmailClient(provider: Provider): Gmail {
-  const tokens: GmailTokens = {
-    accessToken: provider.oauth_access_token ?? "",
-    refreshToken: provider.oauth_refresh_token ?? "",
-    clientId: provider.oauth_client_id ?? "",
-    clientSecret: provider.oauth_client_secret ?? "",
-    expiresAt: provider.oauth_token_expiry
-      ? new Date(provider.oauth_token_expiry).getTime()
-      : undefined,
-  };
-
-  return Gmail.createWithTokens(tokens, (refreshed) => {
-    // Persist refreshed tokens back to the providers table
-    try {
-      updateProvider(provider.id, {
-        oauth_access_token: refreshed.accessToken,
-        oauth_token_expiry: refreshed.expiresAt
-          ? new Date(refreshed.expiresAt).toISOString()
-          : undefined,
-      });
-    } catch {
-      // Non-fatal — token still usable in-memory for this session
-    }
-  });
-}
-
 // ─── Core sync ────────────────────────────────────────────────────────────────
 
 /**
  * Sync one page of Gmail messages into the inbound_emails table.
- * Fetches full MIME (text + HTML body) and downloads attachments.
- *
- * @example
- * let token: string | undefined;
- * do {
- *   const result = await syncGmailInbox({ providerId, pageToken: token });
- *   token = result.nextPageToken;
- * } while (!result.done);
+ * Uses the connectors SDK for all Gmail API calls.
  */
 export async function syncGmailInbox(opts: ConnectorSyncOptions): Promise<GmailSyncResult> {
   const db = opts.db ?? getDatabase();
@@ -144,33 +119,37 @@ export async function syncGmailInbox(opts: ConnectorSyncOptions): Promise<GmailS
   const syncConfig = getGmailSyncConfig();
   const result: GmailSyncResult = { synced: 0, skipped: 0, attachments_saved: 0, errors: [], done: true };
 
-  // Resolve provider
-  const provider = getProvider(opts.providerId, db);
-  if (!provider || provider.type !== "gmail") {
-    result.errors.push(`Provider not found or not a Gmail provider: ${opts.providerId}`);
-    return result;
-  }
-
-  const gmail = makeGmailClient(provider);
+  // Build list args
+  const listArgs = ["-f", "json", "messages", "list", "--max", String(batchSize)];
+  if (opts.labelFilter) listArgs.push("--label", opts.labelFilter);
+  const q = buildQuery(opts);
+  if (q) listArgs.push("--query", q);
 
   // List messages
-  let listRes: Awaited<ReturnType<typeof gmail.messages.list>>;
-  try {
-    listRes = await gmail.messages.list({
-      maxResults: batchSize,
-      labelIds: opts.labelFilter ? [opts.labelFilter] : ["INBOX"],
-      q: buildQuery(opts),
-      pageToken: opts.pageToken,
-    });
-  } catch (e) {
-    result.errors.push(`Failed to list messages: ${String(e)}`);
+  const listResult = await runConnectorCommand("gmail", listArgs);
+  if (!listResult.success) {
+    result.errors.push(`Failed to list messages: ${listResult.stderr || listResult.stdout}`);
     return result;
   }
 
-  const messages = listRes.messages ?? [];
-  if (listRes.nextPageToken) {
-    result.nextPageToken = listRes.nextPageToken;
-    result.done = false;
+  let messages: { id: string }[];
+  let nextPageToken: string | undefined;
+  try {
+    const parsed = parseJsonFromOutput(listResult.stdout);
+    if (Array.isArray(parsed)) {
+      messages = parsed as { id: string }[];
+    } else {
+      const env = parsed as { messages?: { id: string }[]; nextPageToken?: string };
+      messages = env.messages ?? [];
+      if (env.nextPageToken) {
+        nextPageToken = env.nextPageToken;
+        result.nextPageToken = nextPageToken;
+        result.done = false;
+      }
+    }
+  } catch (e) {
+    result.errors.push(`Failed to parse message list: ${String(e)}`);
+    return result;
   }
 
   const capped = opts.maxMessages != null ? messages.slice(0, opts.maxMessages) : messages;
@@ -179,7 +158,7 @@ export async function syncGmailInbox(opts: ConnectorSyncOptions): Promise<GmailS
     if (!msgRef.id) continue;
 
     try {
-      // Dedup by (provider_id, message_id) — safe to re-run
+      // Dedup
       const existing = db
         .query("SELECT id FROM inbound_emails WHERE provider_id = ? AND message_id = ? LIMIT 1")
         .get(opts.providerId, msgRef.id);
@@ -188,20 +167,39 @@ export async function syncGmailInbox(opts: ConnectorSyncOptions): Promise<GmailS
         continue;
       }
 
-      // Fetch full MIME message
-      const msg = await gmail.messages.get(msgRef.id, "full");
-      const headers = msg.payload?.headers ?? [];
-      const getHeader = (name: string) =>
-        headers.find((h) => h.name?.toLowerCase() === name.toLowerCase())?.value ?? "";
+      // Fetch full message with text + HTML body
+      const readResult = await runConnectorCommand("gmail", [
+        "-f", "json", "messages", "read", msgRef.id, "--body", "--html",
+      ]);
 
-      const textBody = gmail.messages.extractBody(msg, false) || null;
-      const htmlBody = gmail.messages.extractBody(msg, true) || null;
-      const receivedAt = parseDate(getHeader("date") || (msg.internalDate
-        ? new Date(parseInt(msg.internalDate, 10)).toISOString()
-        : ""));
+      interface MsgDetail {
+        id: string; from?: string; to?: string; cc?: string;
+        subject?: string; date?: string; body?: string; htmlBody?: string;
+        snippet?: string; size?: number;
+      }
 
-      // List attachments from MIME tree (metadata only at this point)
-      const attachmentList = await gmail.attachments.list(msgRef.id);
+      let detail: MsgDetail = { id: msgRef.id };
+      try {
+        detail = parseJsonFromOutput(readResult.stdout) as MsgDetail;
+      } catch {
+        // fall back to minimal data
+      }
+
+      const textBody = detail.body || detail.snippet || null;
+      const htmlBody = detail.htmlBody || null;
+      const receivedAt = parseDate(detail.date ?? "");
+
+      // List attachments metadata
+      const attListResult = await runConnectorCommand("gmail", ["-f", "json", "attachments", "list", msgRef.id]);
+      type AttMeta = { attachmentId: string; filename: string; mimeType: string; size: number };
+      let attachmentList: AttMeta[] = [];
+      try {
+        if (attListResult.success) {
+          const parsed = parseJsonFromOutput(attListResult.stdout);
+          attachmentList = Array.isArray(parsed) ? (parsed as AttMeta[]) : [];
+        }
+      } catch { /* no attachments or parse error — safe to ignore */ }
+
       const attachmentMeta = attachmentList.map((a) => ({
         filename: a.filename,
         content_type: a.mimeType,
@@ -214,16 +212,16 @@ export async function syncGmailInbox(opts: ConnectorSyncOptions): Promise<GmailS
           provider_id: opts.providerId,
           message_id: msgRef.id,
           in_reply_to_email_id: null,
-          from_address: getHeader("from"),
-          to_addresses: parseAddresses(getHeader("to")),
-          cc_addresses: parseAddresses(getHeader("cc")),
-          subject: getHeader("subject") || "(no subject)",
+          from_address: detail.from ?? "",
+          to_addresses: parseAddresses(detail.to),
+          cc_addresses: parseAddresses(detail.cc),
+          subject: detail.subject ?? "(no subject)",
           text_body: textBody,
           html_body: htmlBody,
           attachments: attachmentMeta,
           attachment_paths: [],
-          headers: Object.fromEntries(headers.map((h) => [h.name ?? "", h.value ?? ""])),
-          raw_size: msg.sizeEstimate ?? 0,
+          headers: {},
+          raw_size: detail.size ?? 0,
           received_at: receivedAt,
         },
         db,
@@ -231,54 +229,48 @@ export async function syncGmailInbox(opts: ConnectorSyncOptions): Promise<GmailS
 
       result.synced++;
 
-      // Download attachments if requested and there are any
+      // Download attachments
       if (downloadAttachments && attachmentList.length > 0 && syncConfig.attachment_storage !== "none") {
-        const paths: AttachmentPath[] = [];
+        const outputDir = getAttachmentDir(stored.id);
+        const dlResult = await runConnectorCommand("gmail", [
+          "attachments", "download", msgRef.id, "--dir", outputDir,
+        ]);
 
-        if (syncConfig.attachment_storage === "s3" && syncConfig.s3_bucket) {
-          // Download locally first, then upload to S3
-          const outputDir = getAttachmentDir(stored.id);
-          const downloaded = await gmail.attachments.downloadAll(msgRef.id, outputDir);
+        if (dlResult.success) {
+          // Scan outputDir for downloaded files
+          const paths: AttachmentPath[] = [];
+          try {
+            const files = readdirSync(outputDir);
+            for (const file of files) {
+              const filePath = join(outputDir, file);
+              const stat = statSync(filePath);
+              const meta = attachmentMeta.find((a) => a.filename === file);
 
-          for (const d of downloaded) {
-            try {
-              const { S3Client, PutObjectCommand } = await import("@aws-sdk/client-s3");
-              const { readFileSync } = await import("node:fs");
-              const client = new S3Client({ region: syncConfig.s3_region ?? "us-east-1" });
-              const key = `${syncConfig.s3_prefix ?? "emails"}/${stored.id}/${d.filename}`;
-              await client.send(new PutObjectCommand({
-                Bucket: syncConfig.s3_bucket,
-                Key: key,
-                Body: readFileSync(d.path),
-                ContentType: d.mimeType,
-              }));
-              paths.push({
-                filename: d.filename,
-                content_type: d.mimeType,
-                size: d.size,
-                s3_url: `s3://${syncConfig.s3_bucket}/${key}`,
-                local_path: d.path,
-              });
-              result.attachments_saved++;
-            } catch (e) {
-              result.errors.push(`S3 upload ${d.filename}: ${String(e)}`);
-              // Keep local path even if S3 fails
-              paths.push({ filename: d.filename, content_type: d.mimeType, size: d.size, local_path: d.path });
+              if (syncConfig.attachment_storage === "s3" && syncConfig.s3_bucket) {
+                try {
+                  const { S3Client, PutObjectCommand } = await import("@aws-sdk/client-s3");
+                  const { readFileSync } = await import("node:fs");
+                  const client = new S3Client({ region: syncConfig.s3_region ?? "us-east-1" });
+                  const key = `${syncConfig.s3_prefix ?? "emails"}/${stored.id}/${file}`;
+                  await client.send(new PutObjectCommand({
+                    Bucket: syncConfig.s3_bucket,
+                    Key: key,
+                    Body: readFileSync(filePath),
+                    ContentType: meta?.content_type ?? "application/octet-stream",
+                  }));
+                  paths.push({ filename: file, content_type: meta?.content_type ?? "", size: stat.size, s3_url: `s3://${syncConfig.s3_bucket}/${key}`, local_path: filePath });
+                } catch (e) {
+                  result.errors.push(`S3 upload ${file}: ${String(e)}`);
+                  paths.push({ filename: file, content_type: meta?.content_type ?? "", size: stat.size, local_path: filePath });
+                }
+              } else {
+                paths.push({ filename: file, content_type: meta?.content_type ?? "", size: stat.size, local_path: filePath });
+              }
               result.attachments_saved++;
             }
-          }
-        } else {
-          // Local storage only
-          const outputDir = getAttachmentDir(stored.id);
-          const downloaded = await gmail.attachments.downloadAll(msgRef.id, outputDir);
-          for (const d of downloaded) {
-            paths.push({ filename: d.filename, content_type: d.mimeType, size: d.size, local_path: d.path });
-            result.attachments_saved++;
-          }
-        }
+          } catch { /* scan failed — non-fatal */ }
 
-        if (paths.length > 0) {
-          updateAttachmentPaths(stored.id, paths, db);
+          if (paths.length > 0) updateAttachmentPaths(stored.id, paths, db);
         }
       }
     } catch (e) {
@@ -290,7 +282,7 @@ export async function syncGmailInbox(opts: ConnectorSyncOptions): Promise<GmailS
 }
 
 /**
- * Sync ALL pages until done. Convenience wrapper for full backfills.
+ * Sync ALL pages until done.
  */
 export async function syncGmailInboxAll(opts: Omit<ConnectorSyncOptions, "pageToken">): Promise<GmailSyncResult> {
   const aggregate: GmailSyncResult = { synced: 0, skipped: 0, attachments_saved: 0, errors: [], done: true };
@@ -304,7 +296,6 @@ export async function syncGmailInboxAll(opts: Omit<ConnectorSyncOptions, "pageTo
     aggregate.errors.push(...page.errors);
     pageToken = page.nextPageToken;
     aggregate.done = page.done;
-
     if (aggregate.errors.length >= 20) {
       aggregate.errors.push("Too many errors — aborting pagination");
       break;
@@ -315,15 +306,13 @@ export async function syncGmailInboxAll(opts: Omit<ConnectorSyncOptions, "pageTo
 }
 
 /**
- * List available Gmail labels for a provider.
+ * List available Gmail labels.
  */
-export async function listGmailLabels(providerId: string): Promise<{ id: string; name: string }[]> {
-  const provider = getProvider(providerId);
-  if (!provider || provider.type !== "gmail") return [];
-  const gmail = makeGmailClient(provider);
+export async function listGmailLabels(_providerId: string): Promise<{ id: string; name: string }[]> {
+  const result = await runConnectorCommand("gmail", ["-f", "json", "labels", "list"]);
+  if (!result.success) return [];
   try {
-    const labels = await gmail.labels.list();
-    return (labels.labels ?? []).map((l) => ({ id: l.id ?? "", name: l.name ?? "" }));
+    return parseJsonFromOutput(result.stdout) as { id: string; name: string }[];
   } catch {
     return [];
   }
