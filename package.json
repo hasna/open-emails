@@ -1,6 +1,6 @@
 {
   "name": "@hasna/emails",
-  "version": "0.5.5",
+  "version": "0.5.6",
   "description": "Email management CLI + MCP server + dashboard for Resend and AWS SES",
   "type": "module",
   "bin": {
@@ -43,6 +43,7 @@
     "@hasna/cloud": "^0.1.24",
     "@hasna/connect-cloudflare": "/home/hasna/workspace/hasna/opensource/opensourcedev/open-connectors/connectors/connect-cloudflare",
     "@hasna/connectors": "^1.3.3",
+    "@hasna/domains": "^0.0.3",
     "@modelcontextprotocol/sdk": "^1.12.1",
     "chalk": "^5.4.1",
     "commander": "^13.1.0",

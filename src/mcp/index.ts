@@ -1804,6 +1804,144 @@ server.tool(
   },
 );
 
+// ─── DOMAIN PURCHASING (via @hasna/domains / Route 53) ───────────────────────
+
+server.tool(
+  "check_domain_availability",
+  "Check if a domain is available for purchase via AWS Route 53 and get pricing",
+  { domain: z.string().describe("Domain to check (e.g. example.com)") },
+  async ({ domain }) => {
+    try {
+      const { r53CheckAvailability } = await import("@hasna/domains");
+      const result = await r53CheckAvailability(domain);
+      return { content: [{ type: "text", text: JSON.stringify(result, null, 2) }] };
+    } catch (e) { return { content: [{ type: "text", text: `Error: ${formatError(e)}` }], isError: true }; }
+  },
+);
+
+server.tool(
+  "register_domain",
+  "Purchase and register a domain via AWS Route 53. Returns an operation ID to track progress.",
+  {
+    domain: z.string(),
+    first_name: z.string(), last_name: z.string(),
+    email: z.string(), phone: z.string().describe("E.164 format, e.g. +1.5551234567"),
+    address_line_1: z.string(), city: z.string(), state: z.string(),
+    country_code: z.string().describe("Two-letter country code, e.g. US"),
+    zip_code: z.string(),
+    organization_name: z.string().optional(),
+    duration_years: z.number().optional().describe("Registration years (default: 1)"),
+  },
+  async (params) => {
+    try {
+      const { r53RegisterDomain } = await import("@hasna/domains");
+      const result = await r53RegisterDomain(params.domain, {
+        first_name: params.first_name, last_name: params.last_name,
+        email: params.email, phone: params.phone,
+        address_line_1: params.address_line_1, city: params.city,
+        state: params.state, country_code: params.country_code,
+        zip_code: params.zip_code, organization_name: params.organization_name,
+      }, params.duration_years ?? 1);
+      return { content: [{ type: "text", text: JSON.stringify({ domain: params.domain, ...result }, null, 2) }] };
+    } catch (e) { return { content: [{ type: "text", text: `Error: ${formatError(e)}` }], isError: true }; }
+  },
+);
+
+server.tool(
+  "get_domain_registration_status",
+  "Check the status of a domain registration operation",
+  { operation_id: z.string() },
+  async ({ operation_id }) => {
+    try {
+      const { r53GetRegistrationStatus } = await import("@hasna/domains");
+      return { content: [{ type: "text", text: JSON.stringify(await r53GetRegistrationStatus(operation_id), null, 2) }] };
+    } catch (e) { return { content: [{ type: "text", text: `Error: ${formatError(e)}` }], isError: true }; }
+  },
+);
+
+server.tool(
+  "list_registered_domains",
+  "List all domains registered in AWS Route 53",
+  {},
+  async () => {
+    try {
+      const { r53ListRegisteredDomains } = await import("@hasna/domains");
+      return { content: [{ type: "text", text: JSON.stringify(await r53ListRegisteredDomains(), null, 2) }] };
+    } catch (e) { return { content: [{ type: "text", text: `Error: ${formatError(e)}` }], isError: true }; }
+  },
+);
+
+server.tool(
+  "setup_domain_for_email",
+  "Full setup: buy domain + create Route 53 hosted zone + register with SES + configure DKIM/SPF/DMARC DNS records. One call to go from domain name to fully configured email sending.",
+  {
+    domain: z.string().describe("Domain to set up"),
+    provider_id: z.string().describe("SES or Resend provider ID"),
+    contact: z.object({
+      first_name: z.string(), last_name: z.string(), email: z.string(),
+      phone: z.string(), address_line_1: z.string(), city: z.string(),
+      state: z.string(), country_code: z.string(), zip_code: z.string(),
+      organization_name: z.string().optional(),
+    }).optional().describe("Registrant contact info (omit if domain already purchased)"),
+    duration_years: z.number().optional(),
+  },
+  async ({ domain, provider_id, contact, duration_years }) => {
+    try {
+      const { r53CheckAvailability, r53RegisterDomain, r53CreateHostedZone, r53FindHostedZoneByDomain, r53UpsertRecords } = await import("@hasna/domains");
+
+      const provider = getProvider(resolveId("providers", provider_id));
+      if (!provider) throw new ProviderNotFoundError(provider_id);
+
+      const steps: string[] = [];
+
+      // 1. Buy domain if contact info provided
+      let operationId: string | undefined;
+      if (contact) {
+        const avail = await r53CheckAvailability(domain);
+        if (!avail.available) throw new Error(`${domain} is not available for registration`);
+        steps.push(`availability: ${avail.available}, price: ${avail.price ?? "unknown"} ${avail.currency ?? ""}`);
+        const reg = await r53RegisterDomain(domain, contact, duration_years ?? 1);
+        operationId = reg.operationId;
+        steps.push(`registration submitted, operation_id: ${operationId}`);
+      }
+
+      // 2. Find or create hosted zone
+      let zone = await r53FindHostedZoneByDomain(domain);
+      if (!zone) {
+        zone = await r53CreateHostedZone(domain, `Email sending for ${domain}`);
+        steps.push(`hosted zone created: ${zone.id}`);
+      } else {
+        steps.push(`using existing zone: ${zone.id}`);
+      }
+
+      // 3. Register with SES + get DNS records
+      const adapter = getAdapter(provider);
+      await adapter.addDomain(domain);
+      createDomain(resolveId("providers", provider_id), domain);
+      steps.push("domain registered with SES");
+
+      // 4. Create DNS records in Route 53
+      const dnsRecords = await adapter.getDnsRecords(domain);
+      const r53Recs = dnsRecords.map((r) => ({
+        name: r.name, type: r.type, ttl: 300,
+        values: r.type === "TXT" ? [`"${r.value}"`] : [r.value],
+      }));
+      await r53UpsertRecords(zone.id, r53Recs);
+      steps.push(`${r53Recs.length} DNS records created (DKIM, SPF, DMARC)`);
+
+      return {
+        content: [{
+          type: "text",
+          text: JSON.stringify({
+            domain, zone_id: zone.id, operation_id: operationId ?? null,
+            steps, next: `Run verify to check DNS propagation: emails domain verify ${domain} --provider ${provider_id}`,
+          }, null, 2),
+        }],
+      };
+    } catch (e) { return { content: [{ type: "text", text: `Error: ${formatError(e)}` }], isError: true }; }
+  },
+);
+
 // ─── CLOUDFLARE DNS ───────────────────────────────────────────────────────────
 
 server.tool(
