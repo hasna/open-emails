@@ -1,6 +1,6 @@
 {
   "name": "@hasna/emails",
-  "version": "0.5.7",
+  "version": "0.5.8",
   "description": "Email management CLI + MCP server + dashboard for Resend and AWS SES",
   "type": "module",
   "bin": {
@@ -40,6 +40,7 @@
   "license": "Apache-2.0",
   "dependencies": {
     "@aws-sdk/client-iam": "^3.1020.0",
+    "@aws-sdk/client-s3": "^3.1020.0",
     "@aws-sdk/client-ses": "^3.1020.0",
     "@aws-sdk/client-sesv2": "^3.0.0",
     "@hasna/cloud": "^0.1.24",
