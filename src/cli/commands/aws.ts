@@ -1,0 +1,116 @@
+/**
+ * `emails aws` command group — AWS infrastructure setup for email.
+ */
+
+import type { Command } from "commander";
+import chalk from "chalk";
+import { handleError } from "../utils.js";
+
+export function registerAwsCommands(program: Command, output: (data: unknown, formatted: string) => void): void {
+  const awsCmd = program.command("aws").description("AWS infrastructure setup for email (S3, SES receipt rules)");
+
+  // ─── SETUP INBOUND ────────────────────────────────────────────────────────
+
+  awsCmd
+    .command("setup-inbound")
+    .description("Create S3 bucket + SES receipt rules to receive inbound email")
+    .requiredOption("--domain <domain>", "Domain to receive email for (e.g. example.com)")
+    .requiredOption("--bucket <name>", "S3 bucket name to store incoming emails")
+    .option("--region <region>", "AWS region", "us-east-1")
+    .option("--prefix <prefix>", "S3 key prefix (default: inbound/<domain>/)")
+    .option("--catch-all", "Also catch subdomains (*.example.com)")
+    .option("--profile <profile>", "AWS profile name (uses env vars if not set)")
+    .action(async (opts: {
+      domain: string; bucket: string; region: string;
+      prefix?: string; catchAll?: boolean; profile?: string;
+    }) => {
+      try {
+        if (opts.profile) {
+          process.env["AWS_PROFILE"] = opts.profile;
+        }
+
+        const { setupInboundEmail } = await import("../../lib/aws-inbound.js");
+
+        console.log(chalk.dim(`Setting up inbound email for ${opts.domain}...`));
+
+        console.log(chalk.dim(`  [1/3] Setting up S3 bucket: ${opts.bucket}`));
+        const result = await setupInboundEmail({
+          domain: opts.domain,
+          bucket: opts.bucket,
+          region: opts.region,
+          prefix: opts.prefix,
+          catchAll: opts.catchAll,
+        });
+
+        console.log(chalk.green(result.bucket_created
+          ? `  ✓ S3 bucket created: ${result.bucket}`
+          : `  ✓ S3 bucket already exists: ${result.bucket}`));
+
+        console.log(chalk.dim("  [2/3] Configuring SES receipt rules..."));
+        console.log(chalk.green(result.rule_set_created
+          ? `  ✓ Receipt rule set created: ${result.rule_set}`
+          : `  ✓ Using rule set: ${result.rule_set}`));
+        console.log(chalk.green(result.rule_created
+          ? `  ✓ Receipt rule created: ${result.rule_name}`
+          : `  ✓ Receipt rule already exists: ${result.rule_name}`));
+
+        console.log(chalk.dim("  [3/3] Done\n"));
+
+        console.log(chalk.bold("Setup complete!"));
+        console.log(`\n  Emails to ${chalk.cyan(`*@${opts.domain}`)} → ${chalk.cyan(`s3://${result.bucket}/${result.s3_prefix}`)}\n`);
+
+        console.log(chalk.bold("  Required DNS records:"));
+        console.log(chalk.yellow(`\n    MX  ${opts.domain}  ${result.mx_record}\n`));
+        console.log(chalk.dim("  Add this MX record to your DNS provider."));
+        console.log(chalk.dim("  (For Cloudflare: emails domain setup-cloudflare ... will set it automatically)\n"));
+
+        console.log(chalk.dim("  To sync received emails locally:"));
+        console.log(chalk.dim(`    emails inbox sync-s3 --bucket ${opts.bucket} --prefix ${result.s3_prefix}\n`));
+
+        output(result, "");
+      } catch (e) { handleError(e); }
+    });
+
+  // ─── STATUS ───────────────────────────────────────────────────────────────
+
+  awsCmd
+    .command("status")
+    .description("Show current SES receipt rules and inbound email configuration")
+    .option("--region <region>", "AWS region", "us-east-1")
+    .option("--profile <profile>", "AWS profile name")
+    .action(async (opts: { region: string; profile?: string }) => {
+      try {
+        if (opts.profile) process.env["AWS_PROFILE"] = opts.profile;
+
+        const { SESClient, DescribeActiveReceiptRuleSetCommand, ListReceiptRuleSetsCommand } = await import("@aws-sdk/client-ses");
+        const ses = new SESClient({ region: opts.region });
+
+        // Active rule set
+        let activeRuleSet = "(none)";
+        let rules: { Name?: string; Enabled?: boolean; Recipients?: string[] }[] = [];
+        try {
+          const active = await ses.send(new DescribeActiveReceiptRuleSetCommand({}));
+          if (active.Metadata?.Name) {
+            activeRuleSet = active.Metadata.Name;
+            rules = active.Rules ?? [];
+          }
+        } catch { /* no active rule set */ }
+
+        const allSets = await ses.send(new ListReceiptRuleSetsCommand({}));
+
+        console.log(chalk.bold("\nSES Inbound Status:"));
+        console.log(`  Active rule set: ${chalk.cyan(activeRuleSet)}`);
+        console.log(`  All rule sets:   ${(allSets.RuleSets ?? []).map(r => r.Name).join(", ") || "(none)"}`);
+
+        if (rules.length > 0) {
+          console.log(chalk.bold("\n  Receipt rules:"));
+          for (const r of rules) {
+            const status = r.Enabled ? chalk.green("enabled") : chalk.dim("disabled");
+            console.log(`    ${chalk.cyan(r.Name ?? "")}  [${status}]  ${(r.Recipients ?? []).join(", ")}`);
+          }
+        }
+        console.log();
+        output({ active_rule_set: activeRuleSet, rules }, "");
+      } catch (e) { handleError(e); }
+    });
+}

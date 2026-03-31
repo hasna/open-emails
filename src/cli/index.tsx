@@ -17,11 +17,11 @@ import { registerContactCommands } from "./commands/contacts.js";
 import { registerGroupCommands } from "./commands/groups.js";
 import { registerSequenceCommands } from "./commands/sequences.js";
 import { registerSandboxCommands } from "./commands/sandbox.js";
-import { registerInboundCommands } from "./commands/inbound.js";
+// inbound commands merged into inbox
 import { registerMiscCommands } from "./commands/misc.js";
 import { registerInboxCommands } from "./commands/inbox.js";
 import { registerTriageCommands } from "./commands/triage.js";
-import { registerDomainsBuyCommands } from "./commands/domains-buy.js";
+import { registerAwsCommands } from "./commands/aws.js";
 
 function getPackageVersion(): string {
   try {
@@ -36,7 +36,7 @@ const program = new Command();
 
 program
   .name("emails")
-  .description("Email management CLI — Resend, AWS SES, and Gmail")
+  .description("Email management CLI — send, receive, sync, and manage email via Resend, AWS SES, and Gmail")
   .version(getPackageVersion())
   .option("--json", "Output JSON instead of formatted text")
   .option("-q, --quiet", "Suppress info output")
@@ -67,10 +67,9 @@ registerContactCommands(program, output);
 registerGroupCommands(program, output);
 registerSequenceCommands(program, output);
 registerSandboxCommands(program, output);
-registerInboundCommands(program, output);
+
 registerMiscCommands(program, output);
 registerInboxCommands(program, output);
 registerTriageCommands(program, output);
-registerDomainsBuyCommands(program, output);
-
+registerAwsCommands(program, output);
 program.parse(process.argv);

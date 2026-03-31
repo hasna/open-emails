@@ -9,10 +9,32 @@ import { getDatabase } from "../../db/database.js";
 import { handleError, resolveId, parseDuration, padRight } from "../utils.js";
 
 export function registerSyncCommands(program: Command, output: (data: unknown, formatted: string) => void): void {
+  // ─── PROVIDER SYNC ────────────────────────────────────────────────────────────
+  // Add `provider sync` as the canonical name for pull
+  const providerCmd = program.commands.find(c => c.name() === "provider");
+  if (providerCmd) {
+    providerCmd
+      .command("sync")
+      .description("Sync delivery events from all providers")
+      .option("--provider <id>", "Specific provider ID")
+      .action(async (opts: { provider?: string }) => {
+        try {
+          if (opts.provider) {
+            const id = resolveId("providers", opts.provider);
+            await syncProvider(id);
+            console.log(chalk.green("✓ Provider synced"));
+          } else {
+            await syncAll();
+            console.log(chalk.green("✓ All providers synced"));
+          }
+        } catch (e) { handleError(e); }
+      });
+  }
+
   // ─── PULL ─────────────────────────────────────────────────────────────────────
   program
     .command("pull")
-    .description("Sync events from provider(s)")
+    .description("Sync events from provider(s) (alias: emails provider sync)")
     .option("--provider <id>", "Provider ID (syncs all if not specified)")
     .option("--watch", "Keep syncing on an interval")
     .option("--interval <duration>", "Watch interval (e.g. 30s, 5m, 1h)", "5m")

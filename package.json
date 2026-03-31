@@ -1,6 +1,6 @@
 {
   "name": "@hasna/emails",
-  "version": "0.5.6",
+  "version": "0.5.7",
   "description": "Email management CLI + MCP server + dashboard for Resend and AWS SES",
   "type": "module",
   "bin": {
@@ -39,6 +39,8 @@
   "author": "Andrei Hasna <andrei@hasna.com>",
   "license": "Apache-2.0",
   "dependencies": {
+    "@aws-sdk/client-iam": "^3.1020.0",
+    "@aws-sdk/client-ses": "^3.1020.0",
     "@aws-sdk/client-sesv2": "^3.0.0",
     "@hasna/cloud": "^0.1.24",
     "@hasna/connect-cloudflare": "/home/hasna/workspace/hasna/opensource/opensourcedev/open-connectors/connectors/connect-cloudflare",
@@ -49,12 +51,14 @@
     "commander": "^13.1.0",
     "googleapis": "^171.4.0",
     "ink": "^5.2.0",
+    "mailparser": "^3.9.6",
     "react": "^18.3.1",
     "resend": "^4.0.0",
     "zod": "^3.24.2"
   },
   "devDependencies": {
     "@types/bun": "^1.2.4",
+    "@types/mailparser": "^3.4.6",
     "@types/react": "^18.3.18",
     "typescript": "^5.7.3"
   }

@@ -11,6 +11,9 @@ const KNOWN_KEYS: { key: string; description: string; example: string }[] = [
   { key: "gmail_s3_prefix", description: "S3 key prefix for attachments (default: emails)", example: "emails" },
   { key: "gmail_s3_region", description: "AWS region for S3 uploads (default: us-east-1)", example: "us-east-1" },
   { key: "cloudflare_api_token", description: "Cloudflare API token for auto DNS setup (also reads CLOUDFLARE_API_TOKEN env var)", example: "abc123..." },
+  { key: "aws_s3_inbound_bucket", description: "S3 bucket name used by SES for inbound email storage", example: "my-emails-bucket" },
+  { key: "aws_s3_inbound_prefix", description: "S3 key prefix for inbound emails (default: inbound/<domain>/)", example: "inbound/example.com/" },
+  { key: "aws_s3_inbound_region", description: "AWS region for inbound S3 bucket (default: us-east-1)", example: "us-east-1" },
 ];
 
 export function registerConfigCommands(program: Command, output: (data: unknown, formatted: string) => void): void {

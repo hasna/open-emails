@@ -9,7 +9,7 @@ import { getDatabase } from "../../db/database.js";
 import { handleError } from "../utils.js";
 
 export function registerInboxCommands(program: Command, output: (data: unknown, formatted: string) => void): void {
-  const inboxCmd = program.command("inbox").description("Sync and browse Gmail inboxes");
+  const inboxCmd = program.command("inbox").description("Sync and browse inbound emails (Gmail, SMTP, S3)");
 
   // ─── SYNC ─────────────────────────────────────────────────────────────────
   inboxCmd
@@ -375,6 +375,87 @@ export function registerInboxCommands(program: Command, output: (data: unknown, 
       } catch (e) {
         handleError(e);
       }
+    });
+
+  // ─── SYNC S3 ──────────────────────────────────────────────────────────────
+  inboxCmd
+    .command("sync-s3")
+    .description("Sync inbound emails from S3 bucket (stored by SES receipt rules)")
+    .requiredOption("--bucket <name>", "S3 bucket name")
+    .option("--prefix <prefix>", "S3 key prefix to scan (e.g. inbound/example.com/)")
+    .option("--region <region>", "AWS region", "us-east-1")
+    .option("--provider <id>", "Associate emails with this provider ID")
+    .option("--limit <n>", "Max emails per run", "100")
+    .option("--profile <profile>", "AWS profile")
+    .action(async (opts: { bucket: string; prefix?: string; region: string; provider?: string; limit: string; profile?: string }) => {
+      try {
+        if (opts.profile) process.env["AWS_PROFILE"] = opts.profile;
+        const { syncS3Inbox } = await import("../../lib/s3-sync.js");
+        console.log(chalk.dim(`Syncing emails from s3://${opts.bucket}/${opts.prefix ?? ""}...`));
+        const result = await syncS3Inbox({
+          bucket: opts.bucket,
+          prefix: opts.prefix,
+          region: opts.region,
+          providerId: opts.provider,
+          limit: parseInt(opts.limit, 10),
+        });
+        const lines = [chalk.bold("\nS3 sync complete:")];
+        lines.push(`  Synced:      ${chalk.green(String(result.synced))}`);
+        lines.push(`  Skipped:     ${chalk.dim(String(result.skipped))} (already stored)`);
+        if ((result.attachments_saved ?? 0) > 0) lines.push(`  Attachments: ${chalk.cyan(String(result.attachments_saved))}`);
+        if (result.errors.length > 0) lines.push(`  Errors:      ${chalk.red(String(result.errors.length))}`);
+        if (result.last_key) lines.push(chalk.dim(`  Last key:    ${result.last_key}`));
+        lines.push("");
+        output(result, lines.join("\n"));
+        if (result.errors.length > 0) {
+          for (const e of result.errors) console.log(chalk.yellow(`  ${e}`));
+        }
+      } catch (e) { handleError(e); }
+    });
+
+  // ─── LISTEN (SMTP) ────────────────────────────────────────────────────────
+  inboxCmd
+    .command("listen")
+    .description("Start a local SMTP listener to receive inbound emails (dev/testing)")
+    .option("--port <port>", "SMTP port to listen on", "2525")
+    .option("--provider <id>", "Associate received emails with this provider ID")
+    .action(async (opts: { port?: string; provider?: string }) => {
+      try {
+        const port = parseInt(opts.port ?? "2525", 10);
+        const { resolveId } = await import("../utils.js");
+        const providerId = opts.provider ? resolveId("providers", opts.provider) : undefined;
+        const { createSmtpServer } = await import("../../lib/inbound.js");
+        console.log(chalk.green(`✓ SMTP listener started on port ${port}`));
+        if (providerId) console.log(chalk.dim(`  Provider: ${providerId}`));
+        console.log(chalk.dim("  Press Ctrl+C to stop\n"));
+        createSmtpServer(port, providerId);
+        process.stdin.resume();
+      } catch (e) { handleError(e); }
+    });
+
+  // ─── OPEN HTML ────────────────────────────────────────────────────────────
+  inboxCmd
+    .command("open <id>")
+    .description("Open HTML body of a synced email in the browser")
+    .action(async (id: string) => {
+      try {
+        const db = getDatabase();
+        const { resolvePartialId } = await import("../../db/database.js");
+        const resolvedId = resolvePartialId(db, "inbound_emails", id);
+        if (!resolvedId) { console.error(chalk.red(`Email not found: ${id}`)); process.exit(1); }
+        const email = db.query("SELECT html_body, text_body FROM inbound_emails WHERE id = ?").get(resolvedId) as { html_body: string | null; text_body: string | null } | null;
+        if (!email) { console.error(chalk.red(`Email not found: ${id}`)); process.exit(1); }
+        const body = email.html_body ?? email.text_body;
+        if (!body) { console.error(chalk.red("This email has no body content.")); process.exit(1); }
+        const { writeFileSync } = await import("node:fs");
+        const { tmpdir } = await import("node:os");
+        const { join: pathJoin } = await import("node:path");
+        const { execSync } = await import("node:child_process");
+        const tmpFile = pathJoin(tmpdir(), `inbox-${resolvedId.slice(0, 8)}.html`);
+        writeFileSync(tmpFile, body);
+        execSync(`open "${tmpFile}" 2>/dev/null || xdg-open "${tmpFile}" 2>/dev/null || echo "File saved: ${tmpFile}"`);
+        console.log(chalk.green(`✓ Opened: ${tmpFile}`));
+      } catch (e) { handleError(e); }
     });
 }
 

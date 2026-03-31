@@ -16,8 +16,11 @@ import {
 import { handleError, resolveId, parseDuration } from "../utils.js";
 
 export function registerMiscCommands(program: Command, output: (data: unknown, formatted: string) => void): void {
-  // ─── SCHEDULED ──────────────────────────────────────────────────────────────
-  const scheduledCmd = program.command("scheduled").description("Manage scheduled emails");
+  // ─── SCHEDULE ───────────────────────────────────────────────────────────────
+  // Unified `schedule` command. Old `scheduled` kept as alias.
+  const scheduleCmd = program.command("schedule").description("Manage and run the email scheduler");
+  // Keep `scheduled` as alias
+  const scheduledCmd = program.command("scheduled").description("Manage scheduled emails (alias: emails schedule)");
 
   scheduledCmd
     .command("list")
@@ -61,10 +64,80 @@ export function registerMiscCommands(program: Command, output: (data: unknown, f
       }
     });
 
-  // ─── SCHEDULER ──────────────────────────────────────────────────────────────
+  // schedule list / cancel — same as scheduled but under unified command
+  scheduleCmd
+    .command("list")
+    .description("List scheduled emails")
+    .option("--status <status>", "Filter: pending|sent|cancelled|failed")
+    .action((opts: { status?: string }) => {
+      try {
+        const status = opts.status as "pending" | "sent" | "cancelled" | "failed" | undefined;
+        const emails = listScheduledEmails(status ? { status } : undefined);
+        if (emails.length === 0) { console.log(chalk.dim("No scheduled emails.")); return; }
+        console.log(chalk.bold("\nScheduled:"));
+        for (const e of emails) {
+          const sc = e.status === "pending" ? chalk.blue(e.status) : e.status === "sent" ? chalk.green(e.status) : e.status === "cancelled" ? chalk.yellow(e.status) : chalk.red(e.status);
+          console.log(`  ${chalk.cyan(e.id.slice(0,8))}  ${e.scheduled_at}  [${sc}]  ${e.subject}  → ${e.to_addresses.join(", ")}`);
+        }
+        console.log();
+      } catch (e) { handleError(e); }
+    });
+
+  scheduleCmd
+    .command("cancel <id>")
+    .description("Cancel a scheduled email")
+    .action((id: string) => {
+      try {
+        const db = getDatabase();
+        const resolvedId = resolvePartialId(db, "scheduled_emails", id);
+        if (!resolvedId) handleError(new Error(`Scheduled email not found: ${id}`));
+        if (!cancelScheduledEmail(resolvedId!, db)) handleError(new Error(`Cannot cancel ${id}`));
+        console.log(chalk.green(`✓ Cancelled: ${resolvedId!.slice(0,8)}`));
+      } catch (e) { handleError(e); }
+    });
+
+  scheduleCmd
+    .command("run")
+    .description("Start the scheduler daemon — sends due emails on interval")
+    .option("--interval <duration>", "Poll interval (e.g. 30s, 1m)", "30s")
+    .action(async (opts: { interval?: string }) => {
+      try {
+        const interval = parseDuration(opts.interval || "30s");
+        console.log(chalk.blue(`Scheduler running. Polling every ${opts.interval || "30s"}. Press Ctrl+C to stop.`));
+        while (true) {
+          const due = getDueEmails();
+          for (const scheduled of due) {
+            try {
+              const provider = getProvider(scheduled.provider_id);
+              if (!provider) { markFailed(scheduled.id, "Provider not found"); continue; }
+              const adapter = getAdapter(provider);
+              const sendOpts = {
+                from: scheduled.from_address, to: scheduled.to_addresses,
+                cc: scheduled.cc_addresses.length > 0 ? scheduled.cc_addresses : undefined,
+                bcc: scheduled.bcc_addresses.length > 0 ? scheduled.bcc_addresses : undefined,
+                reply_to: scheduled.reply_to || undefined,
+                subject: scheduled.subject,
+                html: scheduled.html || undefined,
+                text: scheduled.text_body || undefined,
+              };
+              const messageId = await adapter.sendEmail(sendOpts);
+              createEmail(scheduled.provider_id, sendOpts, messageId);
+              markSent(scheduled.id);
+              console.log(chalk.green(`✓ Sent ${scheduled.id.slice(0,8)} to ${scheduled.to_addresses.join(", ")}`));
+            } catch (err) {
+              markFailed(scheduled.id, err instanceof Error ? err.message : String(err));
+              console.log(chalk.red(`✗ Failed ${scheduled.id.slice(0,8)}: ${err instanceof Error ? err.message : String(err)}`));
+            }
+          }
+          await new Promise(r => setTimeout(r, interval));
+        }
+      } catch (e) { handleError(e); }
+    });
+
+  // ─── SCHEDULER (alias) ───────────────────────────────────────────────────────
   program
     .command("scheduler")
-    .description("Start the email scheduler")
+    .description("Start the email scheduler (alias: emails schedule run)")
     .option("--interval <duration>", "Poll interval (e.g. 30s, 1m, 5m)", "30s")
     .action(async (opts: { interval?: string }) => {
       try {

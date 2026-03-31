@@ -286,8 +286,140 @@ export function registerSendCommands(program: Command, output: (data: unknown, f
       }
     });
 
+  // ─── EMAIL NAMESPACE ─────────────────────────────────────────────────────────
+  // Unified `email` command group — all sent-email operations in one place.
+  // The old top-level commands (log, search, show, replies, conversation, test)
+  // remain as aliases for backwards compatibility.
+
+  const emailCmd = program.command("email").description("Sent email log, search, and history");
+
+  emailCmd
+    .command("list")
+    .description("List sent emails")
+    .option("--provider <id>", "Filter by provider ID")
+    .option("--status <status>", "Filter by status: sent|delivered|bounced|complained|failed")
+    .option("--since <date>", "Show emails since date (ISO 8601)")
+    .option("--limit <n>", "Max results", "20")
+    .action((opts: { provider?: string; status?: string; since?: string; limit?: string }) => {
+      try {
+        const providerId = opts.provider ? resolveId("providers", opts.provider) : undefined;
+        const limit = parseInt(opts.limit ?? "20", 10);
+        const emails = listEmails({ provider_id: providerId, status: opts.status as "sent" | "delivered" | "bounced" | "complained" | "failed" | undefined, since: opts.since, limit });
+        if (emails.length === 0) { output([], chalk.dim("No emails found.")); return; }
+        const lines: string[] = [];
+        lines.push(chalk.bold(`${"Date".padEnd(20)}  ${"From".padEnd(28)}  ${"To".padEnd(28)}  ${"Subject".padEnd(36)}  Status`));
+        lines.push(chalk.dim("─".repeat(120)));
+        for (const e of emails) {
+          const date = new Date(e.sent_at).toLocaleString();
+          const from = e.from_address.length > 28 ? e.from_address.slice(0, 25) + "..." : e.from_address;
+          const to = (e.to_addresses[0] ?? "").length > 28 ? (e.to_addresses[0] ?? "").slice(0, 25) + "..." : (e.to_addresses[0] ?? "");
+          const subj = e.subject.length > 36 ? e.subject.slice(0, 33) + "..." : e.subject;
+          const statusStr = e.status === "delivered" ? chalk.green(e.status) : ["bounced","complained","failed"].includes(e.status) ? chalk.red(e.status) : chalk.blue(e.status);
+          lines.push(`${date.padEnd(20)}  ${from.padEnd(28)}  ${to.padEnd(28)}  ${subj.padEnd(36)}  ${statusStr}`);
+        }
+        lines.push("");
+        output(emails, lines.join("\n"));
+      } catch (e) { handleError(e); }
+    });
+
+  emailCmd
+    .command("search <query>")
+    .description("Search sent emails by subject, from, or to")
+    .option("--since <date>", "Show emails since date")
+    .option("--limit <n>", "Max results", "20")
+    .action((query: string, opts: { since?: string; limit?: string }) => {
+      try {
+        const emails = searchEmails(query, { since: opts.since, limit: parseInt(opts.limit ?? "20", 10) });
+        if (emails.length === 0) { output([], chalk.dim(`No emails matching "${query}".`)); return; }
+        const lines: string[] = [];
+        for (const e of emails) {
+          const date = new Date(e.sent_at).toLocaleString();
+          const statusStr = e.status === "delivered" ? chalk.green(e.status) : ["bounced","complained","failed"].includes(e.status) ? chalk.red(e.status) : chalk.blue(e.status);
+          lines.push(`  ${chalk.dim(e.id.slice(0,8))}  ${date.slice(0,16)}  ${e.from_address.slice(0,25).padEnd(25)}  ${e.subject.slice(0,40).padEnd(40)}  ${statusStr}`);
+        }
+        output(emails, chalk.bold(`\n${emails.length} result(s) for "${query}":\n`) + lines.join("\n") + "\n");
+      } catch (e) { handleError(e); }
+    });
+
+  emailCmd
+    .command("show <id>")
+    .description("Show full details and body of a sent email")
+    .action((id: string) => {
+      // Re-use existing show logic
+      try {
+        const db = getDatabase();
+        const resolvedId = resolvePartialId(db, "emails", id);
+        if (!resolvedId) handleError(new Error(`Email not found: ${id}`));
+        const emailRecord = getEmail(resolvedId!, db);
+        if (!emailRecord) handleError(new Error(`Email not found: ${id}`));
+        const content = getEmailContent(resolvedId!, db);
+        console.log(chalk.bold(`\nEmail: ${emailRecord!.id}`));
+        console.log(`  ${chalk.dim("Subject:")}  ${emailRecord!.subject}`);
+        console.log(`  ${chalk.dim("From:")}     ${emailRecord!.from_address}`);
+        console.log(`  ${chalk.dim("To:")}       ${emailRecord!.to_addresses.join(", ")}`);
+        console.log(`  ${chalk.dim("Status:")}   ${colorStatus(emailRecord!.status)}`);
+        console.log(`  ${chalk.dim("Sent:")}     ${emailRecord!.sent_at}`);
+        if (content?.text_body) { console.log(chalk.bold("\n  Body:"), "\n" + content.text_body.slice(0,500)); }
+        console.log();
+        output(emailRecord, "");
+      } catch (e) { handleError(e); }
+    });
+
+  emailCmd
+    .command("replies <id>")
+    .description("Show replies received for a sent email")
+    .action((id: string) => {
+      try {
+        const db = getDatabase();
+        const resolvedId = resolveId("emails", id);
+        const replies = listReplies(resolvedId, db);
+        if (!replies.length) { console.log(chalk.dim("No replies.")); return; }
+        console.log(chalk.bold(`\n${replies.length} repl${replies.length === 1 ? "y" : "ies"}:\n`));
+        for (const r of replies) {
+          console.log(`  ${chalk.dim(r.received_at.slice(0,16))}  ${chalk.cyan(r.from_address)}`);
+          if (r.text_body) console.log(`  ${r.text_body.slice(0,100).replace(/\n/g," ")}...`);
+          console.log();
+        }
+        output(replies, "");
+      } catch (e) { handleError(e); }
+    });
+
+  emailCmd
+    .command("thread <id>")
+    .description("Show full conversation thread (sent email + all replies)")
+    .action((id: string) => {
+      try {
+        const db = getDatabase();
+        const resolvedId = resolveId("emails", id);
+        const emailRecord = getEmail(resolvedId, db);
+        if (!emailRecord) handleError(new Error(`Email not found: ${id}`));
+        const replies = listReplies(resolvedId, db);
+        console.log(chalk.bold(`\nThread (${1 + replies.length} message${replies.length !== 1 ? "s" : ""})\n`));
+        console.log(chalk.bold(`  [Sent] ${emailRecord!.sent_at.slice(0,16)}`));
+        console.log(`  ${chalk.cyan(emailRecord!.from_address)} → ${emailRecord!.to_addresses.join(", ")}`);
+        console.log(`  ${chalk.dim("Subject:")} ${emailRecord!.subject}  ${colorStatus(emailRecord!.status)}`);
+        for (const r of replies) {
+          console.log(`\n  ${chalk.bold(`[Reply] ${r.received_at.slice(0,16)}`)}`);
+          console.log(`  ${chalk.cyan(r.from_address)}: ${(r.text_body ?? "").slice(0,150).replace(/\n/g," ")}${(r.text_body ?? "").length > 150 ? "..." : ""}`);
+        }
+        if (!replies.length) console.log(chalk.dim("\n  No replies yet."));
+        console.log();
+        output({ email: emailRecord, replies }, "");
+      } catch (e) { handleError(e); }
+    });
+
+  emailCmd
+    .command("send")
+    .description("Send an email (alias of top-level `emails send`)")
+    .option("--from <email>", "Sender")
+    .option("--to <email...>", "Recipient(s)")
+    .option("--subject <subject>", "Subject")
+    .option("--body <text>", "Body")
+    .option("--provider <id>", "Provider ID")
+    .action(() => { console.log(chalk.dim("Use: emails send --from ... --to ... --subject ... --body ...")); });
+
   // ─── LOG ─────────────────────────────────────────────────────────────────────
-  program.command("log").description("Show email send log")
+  program.command("log").description("Show email send log (alias: emails email list)")
     .option("--provider <id>", "Filter by provider ID")
     .option("--status <status>", "Filter by status: sent|delivered|bounced|complained|failed")
     .option("--since <date>", "Show emails since date (ISO 8601)")

@@ -2002,6 +2002,48 @@ server.tool(
   },
 );
 
+server.tool(
+  "sync_s3_inbox",
+  "Sync inbound emails from an S3 bucket (stored by SES receipt rules) into local DB. Parses raw RFC 2822 email files.",
+  {
+    bucket: z.string().describe("S3 bucket name"),
+    prefix: z.string().optional().describe("S3 key prefix (e.g. inbound/example.com/)"),
+    region: z.string().optional().describe("AWS region (default: us-east-1)"),
+    provider_id: z.string().optional().describe("Associate emails with this provider ID"),
+    limit: z.number().optional().describe("Max emails per run (default: 100)"),
+  },
+  async ({ bucket, prefix, region, provider_id, limit }) => {
+    try {
+      const { syncS3Inbox } = await import("../lib/s3-sync.js");
+      const result = await syncS3Inbox({ bucket, prefix, region, providerId: provider_id, limit });
+      return { content: [{ type: "text", text: JSON.stringify(result, null, 2) }] };
+    } catch (e) {
+      return { content: [{ type: "text", text: `Error: ${formatError(e)}` }], isError: true };
+    }
+  },
+);
+
+server.tool(
+  "setup_ses_inbound",
+  "Create S3 bucket + SES receipt rules to receive inbound email for a domain",
+  {
+    domain: z.string().describe("Domain to receive email for"),
+    bucket: z.string().describe("S3 bucket name to create/use"),
+    region: z.string().optional().describe("AWS region (default: us-east-1)"),
+    prefix: z.string().optional().describe("S3 key prefix"),
+    catch_all: z.boolean().optional().describe("Also catch subdomains"),
+  },
+  async ({ domain, bucket, region, prefix, catch_all }) => {
+    try {
+      const { setupInboundEmail } = await import("../lib/aws-inbound.js");
+      const result = await setupInboundEmail({ domain, bucket, region, prefix, catchAll: catch_all });
+      return { content: [{ type: "text", text: JSON.stringify(result, null, 2) }] };
+    } catch (e) {
+      return { content: [{ type: "text", text: `Error: ${formatError(e)}` }], isError: true };
+    }
+  },
+);
+
 // ─── CONFIG ───────────────────────────────────────────────────────────────────
 
 import { loadConfig, saveConfig, getConfigValue, setConfigValue } from "../lib/config.js";
