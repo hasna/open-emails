@@ -1594,216 +1594,6 @@ server.tool(
     }
   },
 );
-
-// ─── WARMING ─────────────────────────────────────────────────────────────────
-
-server.tool(
-  "create_warming_schedule",
-  "Create a domain warming schedule to gradually ramp up email send volume",
-  {
-    domain: z.string().describe("Domain to warm up (e.g. example.com)"),
-    target_daily_volume: z.number().describe("Target daily send volume to reach"),
-    start_date: z.string().optional().describe("Start date in YYYY-MM-DD format (default: today)"),
-    provider_id: z.string().optional().describe("Provider ID to associate with this domain"),
-  },
-  async ({ domain, target_daily_volume, start_date, provider_id }) => {
-    try {
-      const schedule = createWarmingSchedule({ domain, target_daily_volume, start_date, provider_id });
-      const plan = generateWarmingPlan(target_daily_volume);
-      return { content: [{ type: "text", text: JSON.stringify({ schedule, plan_days: plan.length, final_day: plan[plan.length - 1]?.day }, null, 2) }] };
-    } catch (e) {
-      return { content: [{ type: "text", text: `Error: ${formatError(e)}` }], isError: true };
-    }
-  },
-);
-
-server.tool(
-  "get_warming_status",
-  "Get current warming status for a domain including today's limit and sent count",
-  {
-    domain: z.string().describe("Domain to check"),
-  },
-  async ({ domain }) => {
-    try {
-      const schedule = getWarmingSchedule(domain);
-      if (!schedule) throw new Error(`No warming schedule found for domain: ${domain}`);
-      const db = getDatabase();
-      const today_limit = getTodayLimit(schedule);
-      const today_sent = getTodaySentCount(domain, db);
-      const startDate = new Date(schedule.start_date);
-      const today = new Date();
-      today.setHours(0, 0, 0, 0);
-      startDate.setHours(0, 0, 0, 0);
-      const current_day = Math.max(1, Math.floor((today.getTime() - startDate.getTime()) / (1000 * 60 * 60 * 24)) + 1);
-      return { content: [{ type: "text", text: JSON.stringify({ schedule, today_limit, today_sent, current_day }, null, 2) }] };
-    } catch (e) {
-      return { content: [{ type: "text", text: `Error: ${formatError(e)}` }], isError: true };
-    }
-  },
-);
-
-server.tool(
-  "list_warming_schedules",
-  "List all domain warming schedules",
-  {
-    status: z.enum(["active", "paused", "completed"]).optional().describe("Filter by status"),
-  },
-  async ({ status }) => {
-    try {
-      const schedules = listWarmingSchedules(status);
-      return { content: [{ type: "text", text: JSON.stringify(schedules, null, 2) }] };
-    } catch (e) {
-      return { content: [{ type: "text", text: `Error: ${formatError(e)}` }], isError: true };
-    }
-  },
-);
-
-server.tool(
-  "update_warming_status",
-  "Update the status of a domain warming schedule",
-  {
-    domain: z.string().describe("Domain to update"),
-    status: z.enum(["active", "paused", "completed"]).describe("New status"),
-  },
-  async ({ domain, status }) => {
-    try {
-      const updated = updateWarmingStatus(domain, status);
-      if (!updated) throw new Error(`No warming schedule found for domain: ${domain}`);
-      return { content: [{ type: "text", text: JSON.stringify(updated, null, 2) }] };
-    } catch (e) {
-      return { content: [{ type: "text", text: `Error: ${formatError(e)}` }], isError: true };
-    }
-  },
-);
-
-// ─── TRIAGE (AI) ─────────────────────────────────────────────────────────────
-
-import { getTriage, listTriaged, getTriageStats, deleteTriage } from "../db/triage.js";
-import { triageEmail, triageBatch, generateDraftForEmail } from "../lib/triage.js";
-
-server.tool(
-  "triage_email",
-  "Triage a single email using Cerebras AI — classify, prioritize, summarize, analyze sentiment, draft reply",
-  {
-    email_id: z.string().describe("Email ID to triage"),
-    type: z.enum(["sent", "inbound"]).default("inbound").describe("Email type"),
-    model: z.string().optional().describe("Cerebras model override"),
-    skip_draft: z.boolean().optional().describe("Skip generating draft reply"),
-  },
-  async ({ email_id, type, model, skip_draft }) => {
-    try {
-      const result = await triageEmail(email_id, type, { model, skip_draft });
-      return { content: [{ type: "text", text: JSON.stringify(result, null, 2) }] };
-    } catch (e) {
-      return { content: [{ type: "text", text: `Error: ${formatError(e)}` }], isError: true };
-    }
-  },
-);
-
-server.tool(
-  "triage_batch",
-  "Triage multiple untriaged emails in batch",
-  {
-    type: z.enum(["sent", "inbound"]).default("inbound").describe("Email type"),
-    limit: z.number().optional().default(10).describe("Max emails to triage"),
-    model: z.string().optional().describe("Cerebras model override"),
-    skip_draft: z.boolean().optional().describe("Skip generating draft replies"),
-  },
-  async ({ type, limit, model, skip_draft }) => {
-    try {
-      const result = await triageBatch(type, limit, { model, skip_draft });
-      return { content: [{ type: "text", text: JSON.stringify(result, null, 2) }] };
-    } catch (e) {
-      return { content: [{ type: "text", text: `Error: ${formatError(e)}` }], isError: true };
-    }
-  },
-);
-
-server.tool(
-  "get_triage",
-  "Get triage result for an email",
-  {
-    email_id: z.string().describe("Email ID"),
-    type: z.enum(["sent", "inbound"]).default("sent").describe("Email type"),
-  },
-  async ({ email_id, type }) => {
-    try {
-      const result = getTriage(email_id, type);
-      if (!result) return { content: [{ type: "text", text: "No triage result found" }] };
-      return { content: [{ type: "text", text: JSON.stringify(result, null, 2) }] };
-    } catch (e) {
-      return { content: [{ type: "text", text: `Error: ${formatError(e)}` }], isError: true };
-    }
-  },
-);
-
-server.tool(
-  "list_triaged",
-  "List triaged emails with optional filters",
-  {
-    label: z.enum(["action-required", "fyi", "urgent", "follow-up", "spam", "newsletter", "transactional"]).optional(),
-    priority: z.number().min(1).max(5).optional(),
-    sentiment: z.enum(["positive", "negative", "neutral"]).optional(),
-    limit: z.number().optional().default(20),
-  },
-  async ({ label, priority, sentiment, limit }) => {
-    try {
-      const results = listTriaged({ label, priority, sentiment, limit });
-      return { content: [{ type: "text", text: JSON.stringify(results, null, 2) }] };
-    } catch (e) {
-      return { content: [{ type: "text", text: `Error: ${formatError(e)}` }], isError: true };
-    }
-  },
-);
-
-server.tool(
-  "triage_stats",
-  "Get triage statistics — counts by label, priority, sentiment, averages",
-  {},
-  async () => {
-    try {
-      const stats = getTriageStats();
-      return { content: [{ type: "text", text: JSON.stringify(stats, null, 2) }] };
-    } catch (e) {
-      return { content: [{ type: "text", text: `Error: ${formatError(e)}` }], isError: true };
-    }
-  },
-);
-
-server.tool(
-  "generate_draft_reply",
-  "Generate a draft reply for an email using Cerebras AI",
-  {
-    email_id: z.string().describe("Email ID"),
-    type: z.enum(["sent", "inbound"]).default("sent").describe("Email type"),
-    model: z.string().optional().describe("Cerebras model override"),
-  },
-  async ({ email_id, type, model }) => {
-    try {
-      const draft = await generateDraftForEmail(email_id, type, { model });
-      return { content: [{ type: "text", text: draft }] };
-    } catch (e) {
-      return { content: [{ type: "text", text: `Error: ${formatError(e)}` }], isError: true };
-    }
-  },
-);
-
-server.tool(
-  "delete_triage",
-  "Delete a triage result",
-  {
-    triage_id: z.string().describe("Triage result ID"),
-  },
-  async ({ triage_id }) => {
-    try {
-      const deleted = deleteTriage(triage_id);
-      return { content: [{ type: "text", text: deleted ? "Deleted" : "Not found" }] };
-    } catch (e) {
-      return { content: [{ type: "text", text: `Error: ${formatError(e)}` }], isError: true };
-    }
-  },
-);
-
 // ─── DOMAIN PURCHASING (via @hasna/domains / Route 53) ───────────────────────
 
 server.tool(
@@ -2156,11 +1946,18 @@ server.tool("list_agents", "List all registered agents.", {}, async () => {
   return { content: [{ type: "text" as const, text: JSON.stringify([..._emailAgents.values()]) }] };
 });
 
+// ─── Tool modules ────────────────────────────────────────────────────────────
+
+import { registerTriageTools } from "./tools/triage.js";
+import { registerWarmingTools } from "./tools/warming.js";
+
 // ─── Start ────────────────────────────────────────────────────────────────────
 
 async function main() {
   const transport = new StdioServerTransport();
   registerCloudTools(server, "emails");
+  registerTriageTools(server);
+  registerWarmingTools(server);
   await server.connect(transport);
 }
 
