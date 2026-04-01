@@ -22,6 +22,7 @@ import { registerMiscCommands } from "./commands/misc.js";
 import { registerInboxCommands } from "./commands/inbox.js";
 import { registerTriageCommands } from "./commands/triage.js";
 import { registerAwsCommands } from "./commands/aws.js";
+import { registerCloudCommands } from "./commands/cloud.js";
 
 function getPackageVersion(): string {
   try {
@@ -72,4 +73,5 @@ registerMiscCommands(program, output);
 registerInboxCommands(program, output);
 registerTriageCommands(program, output);
 registerAwsCommands(program, output);
+registerCloudCommands(program, output);
 program.parse(process.argv);
