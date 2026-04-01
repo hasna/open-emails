@@ -1,6 +1,6 @@
 {
   "name": "@hasna/emails",
-  "version": "0.5.8",
+  "version": "0.5.9",
   "description": "Email management CLI + MCP server + dashboard for Resend and AWS SES",
   "type": "module",
   "bin": {
@@ -12,6 +12,12 @@
     ".": {
       "types": "./dist/index.d.ts",
       "import": "./dist/index.js"
+    },
+    "./pg-migrations": {
+      "import": "./dist/db/pg-migrations.js"
+    },
+    "./dist/db/pg-migrations.js": {
+      "import": "./dist/db/pg-migrations.js"
     }
   },
   "files": [
