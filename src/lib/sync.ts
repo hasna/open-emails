@@ -6,7 +6,7 @@ import { incrementBounceCount, incrementComplaintCount } from "../db/contacts.js
 import { getAdapter } from "../providers/index.js";
 import { getLocalStats } from "./stats.js";
 import { getConfigValue } from "./config.js";
-import type { Database } from "bun:sqlite";
+import type { Database } from "../db/database.js";
 
 function checkAlerts(providerId: string, providerName: string, d: Database): void {
   const bounceThreshold = Number(getConfigValue("bounce-alert-threshold") ?? 0);

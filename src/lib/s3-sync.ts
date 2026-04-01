@@ -21,7 +21,7 @@ import { getDatabase, getDataDir } from "../db/database.js";
 import { loadConfig, saveConfig, getGmailSyncConfig } from "./config.js";
 import { mkdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
-import type { Database } from "bun:sqlite";
+import type { Database } from "../db/database.js";
 
 export interface S3SyncOptions {
   bucket: string;

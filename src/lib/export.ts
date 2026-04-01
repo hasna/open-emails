@@ -1,6 +1,6 @@
 import { listEmails } from "../db/emails.js";
 import { listEvents } from "../db/events.js";
-import type { Database } from "bun:sqlite";
+import type { Database } from "../db/database.js";
 import type { EventType } from "../types/index.js";
 
 export function exportEmailsCsv(filters: {provider_id?: string; since?: string; until?: string}, db?: Database): string {

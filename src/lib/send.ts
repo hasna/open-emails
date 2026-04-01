@@ -2,7 +2,7 @@ import { getProvider } from "../db/providers.js";
 import { getAdapter } from "../providers/index.js";
 import { getFailoverProviderIds } from "./config.js";
 import type { SendEmailOptions } from "../types/index.js";
-import type { Database } from "bun:sqlite";
+import type { Database } from "../db/database.js";
 
 export interface SendResult {
   messageId: string;

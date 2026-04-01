@@ -8,7 +8,7 @@ import { listTemplates } from "../db/templates.js";
 import { checkAllProviders } from "./health.js";
 import { existsSync } from "fs";
 import { join } from "path";
-import type { Database } from "bun:sqlite";
+import type { Database } from "../db/database.js";
 
 export interface DoctorCheck {
   name: string;

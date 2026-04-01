@@ -1,4 +1,4 @@
-import type { Database } from "bun:sqlite";
+import type { Database } from "./database.js";
 import type { Attachment } from "../types/index.js";
 import { getDatabase, uuid } from "./database.js";
 

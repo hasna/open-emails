@@ -1,6 +1,6 @@
 import chalk from "chalk";
 import { getDatabase } from "../db/database.js";
-import type { Database } from "bun:sqlite";
+import type { Database } from "../db/database.js";
 
 export interface AnalyticsData {
   dailyVolume: { date: string; count: number }[];

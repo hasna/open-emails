@@ -1,6 +1,6 @@
 import type { Stats } from "../types/index.js";
 import { listEvents } from "../db/events.js";
-import type { Database } from "bun:sqlite";
+import type { Database } from "../db/database.js";
 
 export function getLocalStats(providerId?: string, period = "30d", db?: Database): Stats {
   const days = parseInt(period.replace("d", ""), 10) || 30;

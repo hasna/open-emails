@@ -1,4 +1,6 @@
 import { SqliteAdapter as Database } from "@hasna/cloud";
+// Re-export so all db/lib modules import Database from here instead of bun:sqlite
+export type { Database };
 import { copyFileSync, existsSync, mkdirSync, readdirSync, statSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 

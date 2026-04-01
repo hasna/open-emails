@@ -1,4 +1,5 @@
-import type { Database, SQLQueryBindings } from "bun:sqlite";
+import type { Database } from "./database.js";
+import type { SQLQueryBindings } from "bun:sqlite";
 import type { Email, EmailFilter, EmailRow, EmailStatus, SendEmailOptions } from "../types/index.js";
 import { EmailNotFoundError } from "../types/index.js";
 import { getDatabase, now, uuid } from "./database.js";

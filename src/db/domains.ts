@@ -1,4 +1,4 @@
-import type { Database } from "bun:sqlite";
+import type { Database } from "./database.js";
 import type { Domain, DnsStatus } from "../types/index.js";
 import { DomainNotFoundError } from "../types/index.js";
 import { getDatabase, now, uuid } from "./database.js";

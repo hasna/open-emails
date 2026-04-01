@@ -1,4 +1,4 @@
-import type { Database } from "bun:sqlite";
+import type { Database } from "./database.js";
 import type { CreateProviderInput, Provider, ProviderRow } from "../types/index.js";
 import { ProviderNotFoundError } from "../types/index.js";
 import { getDatabase, now, uuid } from "./database.js";

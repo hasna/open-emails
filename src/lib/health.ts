@@ -4,7 +4,7 @@ import { listDomains } from "../db/domains.js";
 import { listAddresses } from "../db/addresses.js";
 import { getAdapter } from "../providers/index.js";
 import { getLocalStats } from "./stats.js";
-import type { Database } from "bun:sqlite";
+import type { Database } from "../db/database.js";
 import type { Provider } from "../types/index.js";
 
 export interface ProviderHealth {

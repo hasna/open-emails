@@ -20,7 +20,7 @@ import { storeInboundEmail, updateAttachmentPaths, listInboundEmails } from "../
 import type { AttachmentPath } from "../db/inbound.js";
 import { getDatabase, getDataDir } from "../db/database.js";
 import { getGmailSyncConfig } from "./config.js";
-import type { Database } from "bun:sqlite";
+import type { Database } from "../db/database.js";
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 

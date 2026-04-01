@@ -1,4 +1,4 @@
-import type { Database } from "bun:sqlite";
+import type { Database } from "./database.js";
 import { getDatabase } from "./database.js";
 
 export interface EmailContent {

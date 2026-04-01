@@ -1,4 +1,4 @@
-import type { Database } from "bun:sqlite";
+import type { Database } from "./database.js";
 import type { AddressRow, CreateAddressInput, EmailAddress } from "../types/index.js";
 import { AddressNotFoundError } from "../types/index.js";
 import { getDatabase, now, uuid } from "./database.js";
