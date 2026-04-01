@@ -1,0 +1,260 @@
+import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
+import { z } from "zod";
+import { listInboundEmails, getInboundEmail, clearInboundEmails, listReplies, getReplyCount } from "../../db/inbound.js";
+import { syncGmailInbox, syncGmailInboxAll } from "../../lib/gmail-sync.js";
+import { getGmailSyncState, updateLastSynced } from "../../db/gmail-sync-state.js";
+import { getDatabase, resolvePartialId } from "../../db/database.js";
+import { listProviders } from "../../db/providers.js";
+import { formatError, resolveId } from "../helpers.js";
+
+export function registerInboxTools(server: McpServer): void {
+// ─── INBOUND EMAILS ───────────────────────────────────────────────────────────
+
+  server.tool(
+  "list_inbound_emails",
+  "List received inbound emails",
+  {
+    provider_id: z.string().optional().describe("Filter by provider ID"),
+    since: z.string().optional().describe("ISO 8601 date — only return emails received after this time"),
+    limit: z.number().optional().describe("Max results (default 50)"),
+  },
+  async ({ provider_id, since, limit }) => {
+    try {
+      const emails = listInboundEmails({ provider_id, since, limit });
+      return { content: [{ type: "text", text: JSON.stringify(emails, null, 2) }] };
+    } catch (e) {
+      return { content: [{ type: "text", text: `Error: ${formatError(e)}` }], isError: true };
+    }
+  },
+);
+
+  server.tool(
+  "get_inbound_email",
+  "Get a specific inbound email by ID",
+  {
+    id: z.string().describe("Inbound email ID (or prefix)"),
+  },
+  async ({ id }) => {
+    try {
+      const resolvedId = resolveId("inbound_emails", id);
+      const email = getInboundEmail(resolvedId);
+      if (!email) throw new Error(`Inbound email not found: ${id}`);
+      return { content: [{ type: "text", text: JSON.stringify(email, null, 2) }] };
+    } catch (e) {
+      return { content: [{ type: "text", text: `Error: ${formatError(e)}` }], isError: true };
+    }
+  },
+);
+
+  server.tool(
+  "clear_inbound_emails",
+  "Delete all inbound emails, optionally filtered by provider",
+  {
+    provider_id: z.string().optional().describe("Only clear emails for this provider"),
+  },
+  async ({ provider_id }) => {
+    try {
+      const count = clearInboundEmails(provider_id);
+      return { content: [{ type: "text", text: `Cleared ${count} inbound email(s)` }] };
+    } catch (e) {
+      return { content: [{ type: "text", text: `Error: ${formatError(e)}` }], isError: true };
+    }
+  },
+);
+
+// ─── GMAIL INBOX SYNC ─────────────────────────────────────────────────────────
+
+  server.tool(
+  "sync_inbox",
+  "Sync Gmail inbox messages into local SQLite. Fetches new messages via the Gmail connector and stores them for offline access.",
+  {
+    provider_id: z.string().describe("Gmail provider ID to sync"),
+    label: z.string().optional().describe("Gmail label to sync (default: INBOX)"),
+    query: z.string().optional().describe("Gmail search query, e.g. 'is:unread from:someone@example.com'"),
+    limit: z.number().optional().describe("Max messages per run (default: 50)"),
+    since: z.string().optional().describe("Only sync messages after this ISO date"),
+    all_pages: z.boolean().optional().describe("Sync all pages until done (for full backfill)"),
+  },
+  async ({ provider_id, label, query, limit, since, all_pages }) => {
+    try {
+      const db = getDatabase();
+      const opts = {
+        providerId: provider_id,
+        labelFilter: label,
+        query,
+        batchSize: limit,
+        since,
+        db,
+      };
+      const result = all_pages
+        ? await syncGmailInboxAll(opts)
+        : await syncGmailInbox(opts);
+
+      updateLastSynced(provider_id, undefined, db);
+
+      return {
+        content: [{
+          type: "text",
+          text: JSON.stringify({
+            synced: result.synced,
+            skipped: result.skipped,
+            attachments_saved: result.attachments_saved,
+            errors: result.errors,
+            done: result.done,
+            nextPageToken: result.nextPageToken,
+          }, null, 2),
+        }],
+      };
+    } catch (e) {
+      return { content: [{ type: "text", text: `Error: ${formatError(e)}` }], isError: true };
+    }
+  },
+);
+
+async function gmailMessageAction(email_id: string, connectorArgs: string[]): Promise<string> {
+  const db = getDatabase();
+  const row = db.query("SELECT message_id FROM inbound_emails WHERE id = ?").get(email_id) as { message_id: string } | null;
+  if (!row?.message_id) throw new Error(`No Gmail message ID for email ${email_id}`);
+  const { runConnectorCommand } = await import("@hasna/connectors");
+  const r = await runConnectorCommand("gmail", [...connectorArgs, row.message_id]);
+  if (!r.success) throw new Error(r.stderr || r.stdout);
+  return row.message_id;
+}
+
+  server.tool(
+  "mark_email_read",
+  "Mark a synced inbound Gmail email as read",
+  { email_id: z.string() },
+  async ({ email_id }) => {
+    try {
+      await gmailMessageAction(email_id, ["messages", "mark-read"]);
+      return { content: [{ type: "text", text: `Marked as read: ${email_id}` }] };
+    } catch (e) { return { content: [{ type: "text", text: `Error: ${formatError(e)}` }], isError: true }; }
+  },
+);
+
+  server.tool(
+  "archive_email",
+  "Archive a synced inbound Gmail email (removes from INBOX)",
+  { email_id: z.string() },
+  async ({ email_id }) => {
+    try {
+      await gmailMessageAction(email_id, ["messages", "archive"]);
+      return { content: [{ type: "text", text: `Archived: ${email_id}` }] };
+    } catch (e) { return { content: [{ type: "text", text: `Error: ${formatError(e)}` }], isError: true }; }
+  },
+);
+
+  server.tool(
+  "star_email",
+  "Star a synced inbound Gmail email",
+  { email_id: z.string() },
+  async ({ email_id }) => {
+    try {
+      await gmailMessageAction(email_id, ["messages", "star"]);
+      return { content: [{ type: "text", text: `Starred: ${email_id}` }] };
+    } catch (e) { return { content: [{ type: "text", text: `Error: ${formatError(e)}` }], isError: true }; }
+  },
+);
+
+  server.tool(
+  "reply_to_email",
+  "Reply to a synced inbound Gmail email, keeping it in the same thread",
+  {
+    email_id: z.string().describe("Inbound email ID (from local DB)"),
+    body: z.string().describe("Reply body text"),
+    is_html: z.boolean().optional().describe("Send as HTML email (default: false)"),
+  },
+  async ({ email_id, body, is_html }) => {
+    try {
+      const db = getDatabase();
+      const row = db.query("SELECT message_id, subject FROM inbound_emails WHERE id = ?").get(email_id) as { message_id: string; subject: string } | null;
+      if (!row?.message_id) throw new Error(`Email not found or no Gmail message ID: ${email_id}`);
+      const { runConnectorCommand } = await import("@hasna/connectors");
+      const args = ["messages", "reply", row.message_id, "--body", body];
+      if (is_html) args.push("--html");
+      const r = await runConnectorCommand("gmail", args);
+      if (!r.success) throw new Error(r.stderr || r.stdout);
+      return { content: [{ type: "text", text: JSON.stringify({ replied_to: row.subject, status: "sent" }, null, 2) }] };
+    } catch (e) {
+      return { content: [{ type: "text", text: `Error: ${formatError(e)}` }], isError: true };
+    }
+  },
+);
+
+  server.tool(
+  "get_attachment",
+  "Get local path or S3 URL for downloaded attachments on a synced inbound email",
+  {
+    email_id: z.string().describe("Inbound email ID"),
+    filename: z.string().optional().describe("Filter by filename (returns all if omitted)"),
+  },
+  async ({ email_id, filename }) => {
+    try {
+      const db = getDatabase();
+      const row = db.query("SELECT attachment_paths FROM inbound_emails WHERE id = ?").get(email_id) as { attachment_paths: string } | null;
+      if (!row) return { content: [{ type: "text", text: `Email not found: ${email_id}` }], isError: true };
+      const paths = JSON.parse(row.attachment_paths ?? "[]") as Array<{ filename: string; local_path?: string; s3_url?: string; content_type: string; size: number }>;
+      const filtered = filename ? paths.filter((p) => p.filename === filename) : paths;
+      return { content: [{ type: "text", text: JSON.stringify(filtered, null, 2) }] };
+    } catch (e) {
+      return { content: [{ type: "text", text: `Error: ${formatError(e)}` }], isError: true };
+    }
+  },
+);
+
+  server.tool(
+  "search_inbound",
+  "Search synced inbound emails in local SQLite by subject, sender, or body text",
+  {
+    query: z.string().describe("Search term to match against subject, from address, or body"),
+    provider_id: z.string().optional().describe("Filter by provider ID"),
+    limit: z.number().optional().describe("Max results (default: 20)"),
+  },
+  async ({ query, provider_id, limit }) => {
+    try {
+      const db = getDatabase();
+      const maxResults = limit ?? 20;
+      const q = query.toLowerCase();
+      const emails = listInboundEmails({ provider_id, limit: maxResults * 4 }, db)
+        .filter(
+          (e) =>
+            e.subject.toLowerCase().includes(q) ||
+            e.from_address.toLowerCase().includes(q) ||
+            (e.text_body ?? "").toLowerCase().includes(q),
+        )
+        .slice(0, maxResults);
+      return { content: [{ type: "text", text: JSON.stringify(emails, null, 2) }] };
+    } catch (e) {
+      return { content: [{ type: "text", text: `Error: ${formatError(e)}` }], isError: true };
+    }
+  },
+);
+
+  server.tool(
+  "get_inbox_sync_status",
+  "Get Gmail sync status for all Gmail providers — last synced time, message counts",
+  {},
+  async () => {
+    try {
+      const db = getDatabase();
+      const providers = listProviders(db).filter((p) => p.type === "gmail");
+      const status = providers.map((p) => {
+        const state = getGmailSyncState(p.id, db);
+        const count = db.query("SELECT COUNT(*) as c FROM inbound_emails WHERE provider_id = ?").get(p.id) as { c: number } | null;
+        return {
+          provider_id: p.id,
+          provider_name: p.name,
+          synced_count: count?.c ?? 0,
+          last_synced_at: state?.last_synced_at ?? null,
+          last_message_id: state?.last_message_id ?? null,
+        };
+      });
+      return { content: [{ type: "text", text: JSON.stringify(status, null, 2) }] };
+    } catch (e) {
+      return { content: [{ type: "text", text: `Error: ${formatError(e)}` }], isError: true };
+    }
+  },
+);
+
+}
