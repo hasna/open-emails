@@ -259,6 +259,75 @@ export function registerProviderCommands(program: Command, output: (data: unknow
       }
     });
 
+  // ─── CHECK ───────────────────────────────────────────────────────────────
+  providerCmd
+    .command("check")
+    .description("Verify all providers are healthy with connector auth validation")
+    .action(async () => {
+      try {
+        const providers = listProviders();
+        if (providers.length === 0) {
+          console.log(chalk.dim("No providers configured."));
+          console.log(chalk.bold("\nQuick setup:"));
+          console.log(chalk.dim("  SES:    emails provider add --type ses --name \"My SES\" --region us-east-1 --access-key ... --secret-key ..."));
+          console.log(chalk.dim("  Resend: emails provider add --type resend --name \"My Resend\" --api-key re_..."));
+          console.log(chalk.dim("  Gmail:  connectors auth gmail --no-browser  →  emails provider add-gmail"));
+          return;
+        }
+
+        console.log(chalk.bold(`\nChecking ${providers.length} provider(s)...\n`));
+        const { runConnectorCommand } = await import("@hasna/connectors");
+
+        for (const p of providers) {
+          const icon = p.active ? "" : chalk.dim("[inactive] ");
+          process.stdout.write(`  ${icon}${chalk.cyan(p.name)} (${p.type}) ... `);
+
+          if (p.type === "gmail") {
+            // Check connector auth
+            const meResult = await runConnectorCommand("gmail", ["-f", "json", "me"]);
+            if (meResult.success) {
+              let email = "";
+              try { email = (JSON.parse(meResult.stdout) as { emailAddress?: string }).emailAddress ?? ""; } catch {}
+              console.log(chalk.green(`✓ authenticated${email ? ` as ${email}` : ""}`));
+            } else {
+              console.log(chalk.red("✗ not authenticated"));
+              console.log(chalk.dim(`    Fix: connectors auth gmail --no-browser`));
+            }
+          } else if (p.type === "ses") {
+            if (!p.access_key || !p.secret_key) {
+              console.log(chalk.yellow("⚠ missing credentials"));
+            } else {
+              try {
+                const adapter = getAdapter(p);
+                await adapter.listDomains();
+                console.log(chalk.green("✓ connected"));
+              } catch (e) {
+                console.log(chalk.red(`✗ ${e instanceof Error ? e.message : String(e)}`));
+              }
+            }
+          } else if (p.type === "resend") {
+            if (!p.api_key) {
+              console.log(chalk.yellow("⚠ missing API key"));
+            } else {
+              try {
+                const adapter = getAdapter(p);
+                await adapter.listDomains();
+                console.log(chalk.green("✓ connected"));
+              } catch (e) {
+                console.log(chalk.red(`✗ ${e instanceof Error ? e.message : String(e)}`));
+              }
+            }
+          } else {
+            console.log(chalk.dim("sandbox (no auth needed)"));
+          }
+        }
+
+        console.log();
+      } catch (e) {
+        handleError(e);
+      }
+    });
+
   // ─── ADD-GMAIL ────────────────────────────────────────────────────────────
   providerCmd
     .command("add-gmail")
@@ -289,8 +358,14 @@ export function registerProviderCommands(program: Command, output: (data: unknow
         const tokensPath = join(profilesDir, profile, "tokens.json");
 
         if (!existsSync(tokensPath)) {
-          console.error(chalk.red(`No tokens found for profile "${profile}" at ${tokensPath}`));
-          console.error(chalk.dim("Run: connectors auth gmail"));
+          console.error(chalk.red(`Gmail not authenticated (profile: "${profile}")`));
+          console.log("");
+          console.log(chalk.bold("To authenticate, run:"));
+          console.log(chalk.cyan("  connectors auth gmail --no-browser"));
+          console.log(chalk.dim("  (prints a URL — open it in your browser, complete OAuth, then re-run this command)"));
+          console.log("");
+          console.log(chalk.dim("Or check if credentials are configured:"));
+          console.log(chalk.dim("  connectors config gmail show"));
           process.exit(1);
         }
 
@@ -301,17 +376,28 @@ export function registerProviderCommands(program: Command, output: (data: unknow
         };
 
         if (!tokens.refreshToken) {
-          console.error(chalk.red("Tokens file missing refreshToken. Re-authenticate with: connectors auth gmail"));
+          console.error(chalk.red("Authentication incomplete — no refresh token found."));
+          console.log(chalk.dim("Re-run: connectors auth gmail --no-browser"));
           process.exit(1);
         }
 
         // Get Gmail profile info to use as the email address
         const { runConnectorCommand } = await import("@hasna/connectors");
-        const meResult = await runConnectorCommand("gmail", ["me"]);
+        console.log(chalk.dim("Verifying Gmail connection..."));
+        const meResult = await runConnectorCommand("gmail", ["-f", "json", "me"]);
         let emailAddress = "";
         if (meResult.success) {
-          const match = meResult.stdout.match(/emailAddress:\s*(\S+)/);
-          if (match?.[1]) emailAddress = match[1];
+          try {
+            const me = JSON.parse(meResult.stdout) as { emailAddress?: string };
+            emailAddress = me.emailAddress ?? "";
+          } catch {
+            const match = meResult.stdout.match(/emailAddress[:\s]+([^\s,}]+)/);
+            if (match?.[1]) emailAddress = match[1];
+          }
+        } else {
+          console.error(chalk.red("Could not verify Gmail connection."));
+          console.log(chalk.dim("Try re-authenticating: connectors auth gmail --no-browser"));
+          process.exit(1);
         }
 
         const providerName = opts.name ?? (emailAddress ? `Gmail (${emailAddress})` : `Gmail (${profile})`);
@@ -328,6 +414,7 @@ export function registerProviderCommands(program: Command, output: (data: unknow
           oauth_token_expiry: expiry,
         });
 
+        console.log(chalk.green(`✓ Connected as: ${emailAddress}`));
         console.log(chalk.green(`✓ Created provider: ${providerName} [${provider.id.slice(0, 8)}]`));
 
         // Create address record if we have the email
@@ -336,7 +423,11 @@ export function registerProviderCommands(program: Command, output: (data: unknow
           console.log(chalk.green(`✓ Added address: ${emailAddress}`));
         }
 
-        console.log(chalk.dim(`\nRun sync: emails inbox sync --provider ${provider.id.slice(0, 8)}`));
+        console.log(chalk.bold("\nNext steps:"));
+        console.log(chalk.dim(`  Sync inbox:    emails inbox sync --provider ${provider.id.slice(0, 8)} --all`));
+        console.log(chalk.dim(`  Check status:  emails inbox status`));
+        console.log(chalk.dim(`  Send email:    emails send --from ${emailAddress} --to ... --subject ... --body ...`));
+        console.log();
       } catch (e) {
         handleError(e);
       }
