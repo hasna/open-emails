@@ -129,8 +129,8 @@ export function registerMiscOpsTools(server: McpServer): void {
   "List emails captured by sandbox providers (not actually sent)",
   {
     provider_id: z.string().optional().describe("Filter by sandbox provider ID"),
-    limit: z.number().optional().describe("Max results (default 50)"),
-    offset: z.number().optional().describe("Pagination offset (default 0)"),
+    limit: z.number().int().positive().optional().describe("Max results (default 50)"),
+    offset: z.number().int().nonnegative().optional().describe("Pagination offset (default 0)"),
   },
   async ({ provider_id, limit, offset }) => {
     try {

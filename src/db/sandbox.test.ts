@@ -143,6 +143,17 @@ describe("listSandboxEmails", () => {
     expect(page2).not.toEqual(page1);
     expect(page2.some((id) => page1.includes(id))).toBe(false);
   });
+
+  it("clamps negative pagination values", () => {
+    const p = makeProvider();
+    const db = getDatabase();
+    for (let i = 0; i < 3; i++) {
+      storeSandboxEmail({ provider_id: p.id, from_address: "a@a.com", to_addresses: ["b@b.com"], cc_addresses: [], bcc_addresses: [], reply_to: null, subject: `Clamp ${i}`, html: null, text_body: "t", attachments: [], headers: {} }, db);
+    }
+
+    const withNegative = listSandboxEmails(undefined, -5, -10, db);
+    expect(withNegative.length).toBe(1);
+  });
 });
 
 describe("getSandboxEmail", () => {

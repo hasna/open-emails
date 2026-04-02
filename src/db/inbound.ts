@@ -182,8 +182,10 @@ export function listInboundEmails(
   db?: Database,
 ): InboundEmail[] {
   const d = db || getDatabase();
-  const limit = opts?.limit ?? 50;
-  const offset = opts?.offset ?? 0;
+  const rawLimit = opts?.limit ?? 50;
+  const rawOffset = opts?.offset ?? 0;
+  const limit = Number.isFinite(rawLimit) ? Math.max(1, Math.trunc(rawLimit)) : 50;
+  const offset = Number.isFinite(rawOffset) ? Math.max(0, Math.trunc(rawOffset)) : 0;
   const conditions: string[] = [];
   const params: (string | number)[] = [];
 

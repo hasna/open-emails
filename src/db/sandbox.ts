@@ -100,7 +100,9 @@ export function listSandboxEmails(
   dbOrOffset?: Database | number,
   maybeDb?: Database,
 ): SandboxEmail[] {
-  const offset = typeof dbOrOffset === "number" ? dbOrOffset : 0;
+  const rawOffset = typeof dbOrOffset === "number" ? dbOrOffset : 0;
+  const safeLimit = Number.isFinite(limit) ? Math.max(1, Math.trunc(limit)) : 50;
+  const offset = Number.isFinite(rawOffset) ? Math.max(0, Math.trunc(rawOffset)) : 0;
   const d = typeof dbOrOffset === "number"
     ? (maybeDb || getDatabase())
     : (dbOrOffset || getDatabase());
@@ -109,11 +111,11 @@ export function listSandboxEmails(
   if (providerId) {
     rows = d.query(
       "SELECT * FROM sandbox_emails WHERE provider_id = ? ORDER BY created_at DESC LIMIT ? OFFSET ?",
-    ).all(providerId, limit, offset) as SandboxEmailRow[];
+    ).all(providerId, safeLimit, offset) as SandboxEmailRow[];
   } else {
     rows = d.query(
       "SELECT * FROM sandbox_emails ORDER BY created_at DESC LIMIT ? OFFSET ?",
-    ).all(limit, offset) as SandboxEmailRow[];
+    ).all(safeLimit, offset) as SandboxEmailRow[];
   }
   return rows.map(rowToEmail);
 }

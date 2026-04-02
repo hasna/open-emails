@@ -120,6 +120,16 @@ describe("listInboundEmails", () => {
     expect(page2.some((id) => page1.includes(id))).toBe(false);
   });
 
+  it("clamps negative pagination values", () => {
+    const db = makeDb();
+    for (let i = 0; i < 3; i++) {
+      storeInboundEmail({ ...sampleInput, subject: `Clamp ${i}` }, db);
+    }
+
+    const withNegative = listInboundEmails({ limit: -5, offset: -10 }, db);
+    expect(withNegative.length).toBe(1);
+  });
+
   it("returns empty array when none exist", () => {
     const db = makeDb();
     expect(listInboundEmails({}, db)).toEqual([]);
