@@ -41,11 +41,26 @@ function setupDb() {
   return { db, providerId };
 }
 
-function setMock(msgs: { id: string; from?: string; subject?: string }[], readOutputs?: string[]) {
+function setMock(
+  msgs: { id: string; from?: string; subject?: string; body?: string; htmlBody?: string }[],
+  readOutputs?: string[],
+) {
   let readIdx = 0;
   mockRun.mockImplementation(async (_name: string, args: string[]) => {
     if (args.includes("read") || args.includes("get")) {
-      return { success: true, stdout: readOutputs?.[readIdx++] ?? makeReadOutput({ id: args.find((a) => a.length > 5 && !a.startsWith("-")) ?? "x" }), stderr: "", exitCode: 0 };
+      const isHtml = args.includes("--html");
+      const idx = Math.max(args.indexOf("read"), args.indexOf("get"));
+      const id = args[idx + 1] ?? "x";
+      const msg = msgs.find((m) => m.id === id);
+      if (readOutputs && !isHtml) {
+        return { success: true, stdout: readOutputs[readIdx++] ?? makeReadOutput({ id }), stderr: "", exitCode: 0 };
+      }
+      if (isHtml && msg?.htmlBody) {
+        // Return HTML body for --html calls
+        return { success: true, stdout: JSON.stringify({ id, from: msg.from ?? "a@b.com", subject: msg.subject ?? "S", date: DATE, body: msg.htmlBody, size: 200 }), stderr: "", exitCode: 0 };
+      }
+      // Return text body
+      return { success: true, stdout: makeReadOutput({ id, from: msg?.from, subject: msg?.subject, body: msg?.body }), stderr: "", exitCode: 0 };
     }
     if (args.includes("list")) {
       return { success: true, stdout: makeListOutput(msgs), stderr: "", exitCode: 0 };
@@ -99,9 +114,10 @@ describe("syncGmailInbox", () => {
     expect(r2.skipped).toBe(1);
   });
 
-  it("stores text and html body", async () => {
+  it("stores text and html body separately", async () => {
     const { db, providerId } = setupDb();
-    setMock([{ id: "msg1" }], [makeReadOutput({ id: "msg1", body: "plain text", htmlBody: "<b>html</b>" })]);
+    // Provide both text body and HTML body — mock returns them for separate calls
+    setMock([{ id: "msg1", body: "plain text", htmlBody: "<b>html</b>" }]);
     await syncGmailInbox({ providerId, db });
     const row = db.query("SELECT text_body, html_body FROM inbound_emails WHERE message_id = 'msg1'").get() as { text_body: string; html_body: string } | null;
     expect(row!.text_body).toBe("plain text");

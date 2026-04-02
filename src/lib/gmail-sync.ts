@@ -167,27 +167,39 @@ export async function syncGmailInbox(opts: ConnectorSyncOptions): Promise<GmailS
         continue;
       }
 
-      // Fetch full message with text + HTML body
-      const readResult = await runConnectorCommand("gmail", [
-        "-f", "json", "messages", "read", msgRef.id, "--body", "--html",
-      ]);
-
+      // Fetch full message — two calls: text body + HTML body
+      // (connector returns only one body per call based on --html flag)
       interface MsgDetail {
         id: string; from?: string; to?: string; cc?: string;
-        subject?: string; date?: string; body?: string; htmlBody?: string;
+        subject?: string; date?: string; body?: string;
         snippet?: string; size?: number;
       }
 
+      const readTextResult = await runConnectorCommand("gmail", [
+        "-f", "json", "messages", "read", msgRef.id, "--body",
+      ]);
       let detail: MsgDetail = { id: msgRef.id };
       try {
-        detail = parseJsonFromOutput(readResult.stdout) as MsgDetail;
-      } catch {
-        // fall back to minimal data
-      }
+        detail = parseJsonFromOutput(readTextResult.stdout) as MsgDetail;
+      } catch { /* fall back to minimal data */ }
 
       const textBody = detail.body || detail.snippet || null;
-      const htmlBody = detail.htmlBody || null;
       const receivedAt = parseDate(detail.date ?? "");
+
+      // Fetch HTML body separately
+      let htmlBody: string | null = null;
+      if (readTextResult.success) {
+        const readHtmlResult = await runConnectorCommand("gmail", [
+          "-f", "json", "messages", "read", msgRef.id, "--body", "--html",
+        ]);
+        try {
+          const htmlDetail = parseJsonFromOutput(readHtmlResult.stdout) as MsgDetail;
+          // Only use if it differs from text (indicates actual HTML content)
+          if (htmlDetail.body && htmlDetail.body !== textBody) {
+            htmlBody = htmlDetail.body;
+          }
+        } catch { /* no HTML body */ }
+      }
 
       // List attachments metadata
       const attListResult = await runConnectorCommand("gmail", ["-f", "json", "attachments", "list", msgRef.id]);
