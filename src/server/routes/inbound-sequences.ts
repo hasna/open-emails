@@ -6,9 +6,10 @@ import { createWarmingSchedule, getWarmingSchedule, listWarmingSchedules, update
 import { getTodayLimit, getTodaySentCount } from '../../lib/warming.js';
 import { getTriage, listTriaged, getTriageStats } from '../../db/triage.js';
 import { triageEmail, triageBatch, generateDraftForEmail } from '../../lib/triage.js';
-import { listEmails } from '../../db/emails.js';
+import { updateEmailStatus } from '../../db/emails.js';
 import { upsertEvent } from '../../db/events.js';
-import { getDatabase } from '../../db/database.js';
+import { runDiagnostics } from '../../lib/doctor.js';
+import { syncProvider, syncAll } from '../../lib/sync.js';
 import { json, notFound, badRequest, internalError, resolveId, parseBody, checkRateLimit, tooManyRequests } from './helpers.js';
 
 export async function handle(req: Request, url: URL, path: string, method: string): Promise<Response | null> {
@@ -67,6 +68,7 @@ if (path === "/api/inbound" && method === "POST") {
       text_body: parsed.text_body,
       html_body: parsed.html_body,
       attachments: [],
+      attachment_paths: [],
       headers: parsed.headers,
       raw_size: rawBody.length,
       received_at: new Date().toISOString(),
@@ -293,7 +295,6 @@ if (warmingDomainMatch && method === "DELETE") {
 // GET /api/triage/stats
 if (path === "/api/triage/stats" && method === "GET") {
   try {
-    const { getTriageStats } = await import("../db/triage.js");
     return json(getTriageStats());
   } catch (e) { return internalError(e); }
 }
@@ -301,7 +302,6 @@ if (path === "/api/triage/stats" && method === "GET") {
 // POST /api/triage/batch
 if (path === "/api/triage/batch" && method === "POST") {
   try {
-    const { triageBatch } = await import("../lib/triage.js");
     const body = await req.json() as { type?: string; limit?: number; model?: string; skip_draft?: boolean };
     const type = (body.type === "sent" ? "sent" : "inbound") as "sent" | "inbound";
     const result = await triageBatch(type, body.limit || 10, { model: body.model, skip_draft: body.skip_draft });
@@ -313,7 +313,6 @@ if (path === "/api/triage/batch" && method === "POST") {
 const triageDraftMatch = path.match(/^\/api\/triage\/([^/]+)\/draft$/);
 if (triageDraftMatch && method === "POST") {
   try {
-    const { generateDraftForEmail } = await import("../lib/triage.js");
     const body = await req.json() as { type?: string; model?: string };
     const type = (body.type === "inbound" ? "inbound" : "sent") as "sent" | "inbound";
     const draft = await generateDraftForEmail(triageDraftMatch[1]!, type, { model: body.model });
@@ -328,7 +327,7 @@ if (triageIdMatch && triageIdMatch[1] !== "batch" && triageIdMatch[1] !== "stats
 
   if (method === "GET") {
     try {
-      const { getTriage, getTriageById } = await import("../db/triage.js");
+      const { getTriageById } = await import("../../db/triage.js");
       const typeParam = url.searchParams.get("type") || "sent";
       let result = getTriageById(triageTargetId);
       if (!result) result = getTriage(triageTargetId, typeParam as "sent" | "inbound");
@@ -339,7 +338,6 @@ if (triageIdMatch && triageIdMatch[1] !== "batch" && triageIdMatch[1] !== "stats
 
   if (method === "POST") {
     try {
-      const { triageEmail } = await import("../lib/triage.js");
       const body = await req.json() as { type?: string; model?: string; skip_draft?: boolean };
       const type = (body.type === "inbound" ? "inbound" : "sent") as "sent" | "inbound";
       const result = await triageEmail(triageTargetId, type, { model: body.model, skip_draft: body.skip_draft });
@@ -349,7 +347,7 @@ if (triageIdMatch && triageIdMatch[1] !== "batch" && triageIdMatch[1] !== "stats
 
   if (method === "DELETE") {
     try {
-      const { deleteTriage } = await import("../db/triage.js");
+      const { deleteTriage } = await import("../../db/triage.js");
       const deleted = deleteTriage(triageTargetId);
       return json({ deleted });
     } catch (e) { return internalError(e); }
@@ -359,7 +357,6 @@ if (triageIdMatch && triageIdMatch[1] !== "batch" && triageIdMatch[1] !== "stats
 // GET /api/triage — list triaged emails
 if (path === "/api/triage" && method === "GET") {
   try {
-    const { listTriaged } = await import("../db/triage.js");
     const label = url.searchParams.get("label") || undefined;
     const priority = url.searchParams.get("priority") ? Number(url.searchParams.get("priority")) : undefined;
     const sentiment = url.searchParams.get("sentiment") || undefined;
@@ -421,6 +418,5 @@ if (trackClickMatch && method === "GET") {
     headers: { "Location": originalUrl },
   });
 }
-  return null;
   return null;
 }

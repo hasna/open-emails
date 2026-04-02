@@ -5,7 +5,7 @@ import { createDomain } from '../../db/domains.js';
 import { getProvider } from '../../db/providers.js';
 import { getAdapter } from '../../providers/index.js';
 import { getDatabase } from '../../db/database.js';
-import { loadConfig, saveConfig, getConfigValue, setConfigValue } from '../../lib/config.js';
+import { loadConfig, getConfigValue, setConfigValue } from '../../lib/config.js';
 import { formatError, resolveId, ProviderNotFoundError } from '../helpers.js';
 
 interface EmailAgent { id: string; name: string; session_id?: string; last_seen_at: string; project_id?: string; }
@@ -161,7 +161,7 @@ export function registerInfrastructureTools(server: McpServer): void {
   },
   async ({ domain, cloudflare_token }) => {
     try {
-      const { getCloudflare, findZone } = await import("../lib/cloudflare-dns.js");
+      const { getCloudflare, findZone } = await import("../../lib/cloudflare-dns.js");
       const cf = getCloudflare(cloudflare_token);
       const zone = await findZone(cf, domain);
       if (!zone) return { content: [{ type: "text", text: `No Cloudflare zone found for ${domain}` }], isError: true };
@@ -194,7 +194,7 @@ export function registerInfrastructureTools(server: McpServer): void {
         createDomain(resolveId("providers", provider_id), domain);
       }
 
-      const { setupEmailDns } = await import("../lib/cloudflare-dns.js");
+      const { setupEmailDns } = await import("../../lib/cloudflare-dns.js");
       const result = await setupEmailDns({
         domain,
         provider,
@@ -222,7 +222,7 @@ export function registerInfrastructureTools(server: McpServer): void {
   },
   async ({ bucket, prefix, region, provider_id, limit }) => {
     try {
-      const { syncS3Inbox } = await import("../lib/s3-sync.js");
+      const { syncS3Inbox } = await import("../../lib/s3-sync.js");
       const result = await syncS3Inbox({ bucket, prefix, region, providerId: provider_id, limit });
       return { content: [{ type: "text", text: JSON.stringify(result, null, 2) }] };
     } catch (e) {
@@ -243,7 +243,7 @@ export function registerInfrastructureTools(server: McpServer): void {
   },
   async ({ domain, bucket, region, prefix, catch_all }) => {
     try {
-      const { setupInboundEmail } = await import("../lib/aws-inbound.js");
+      const { setupInboundEmail } = await import("../../lib/aws-inbound.js");
       const result = await setupInboundEmail({ domain, bucket, region, prefix, catchAll: catch_all });
       return { content: [{ type: "text", text: JSON.stringify(result, null, 2) }] };
     } catch (e) {
@@ -335,7 +335,7 @@ export function registerInfrastructureTools(server: McpServer): void {
   const existing = [...emailAgents.values()].find(a => a.name === params.name);
   if (existing) { existing.last_seen_at = new Date().toISOString(); if (params.session_id) existing.session_id = params.session_id; return { content: [{ type: "text" as const, text: JSON.stringify(existing) }] }; }
   const id = Math.random().toString(36).slice(2, 10);
-  const ag: _EmailAgent = { id, name: params.name, session_id: params.session_id, last_seen_at: new Date().toISOString() };
+  const ag: EmailAgent = { id, name: params.name, session_id: params.session_id, last_seen_at: new Date().toISOString() };
   emailAgents.set(id, ag);
   return { content: [{ type: "text" as const, text: JSON.stringify(ag) }] };
   });

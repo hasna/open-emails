@@ -4,9 +4,9 @@ import {
   createSequence, getSequence, listSequences,
   addStep, enroll, unenroll, listEnrollments,
 } from "../../db/sequences.js";
-import { listInboundEmails, listReplies, getReplyCount } from "../../db/inbound.js";
-import { getEmail } from "../../db/emails.js";
-import { formatError, resolveId } from "../helpers.js";
+import { listReplies, getReplyCount } from "../../db/inbound.js";
+import { getDatabase, resolvePartialId } from "../../db/database.js";
+import { formatError } from "../helpers.js";
 
 export function registerSequenceTools(server: McpServer): void {
 // ─── SEQUENCES ────────────────────────────────────────────────────────────────

@@ -114,10 +114,10 @@ export function registerProviderTools(server: McpServer): void {
         throw new Error("Provider is missing oauth_client_id or oauth_client_secret");
       }
 
-      const { startGmailOAuthFlow } = await import("../lib/gmail-oauth.js");
+      const { startGmailOAuthFlow } = await import("../../lib/gmail-oauth.js");
       const tokens = await startGmailOAuthFlow(provider.oauth_client_id, provider.oauth_client_secret);
 
-      const { updateProvider } = await import("../db/providers.js");
+      const { updateProvider } = await import("../../db/providers.js");
       const updated = updateProvider(id, {
         oauth_refresh_token: tokens.refresh_token,
         oauth_access_token: tokens.access_token,

@@ -363,6 +363,7 @@ function handleSmtpLine(
             text_body: parsed.text_body,
             html_body: parsed.html_body,
             attachments: [],
+            attachment_paths: [],
             headers: parsed.headers,
             raw_size: raw.length,
             received_at: new Date().toISOString(),

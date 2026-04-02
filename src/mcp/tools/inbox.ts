@@ -1,9 +1,9 @@
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
-import { listInboundEmails, getInboundEmail, clearInboundEmails, listReplies, getReplyCount } from "../../db/inbound.js";
+import { listInboundEmails, getInboundEmail, clearInboundEmails } from "../../db/inbound.js";
 import { syncGmailInbox, syncGmailInboxAll } from "../../lib/gmail-sync.js";
 import { getGmailSyncState, updateLastSynced } from "../../db/gmail-sync-state.js";
-import { getDatabase, resolvePartialId } from "../../db/database.js";
+import { getDatabase } from "../../db/database.js";
 import { listProviders } from "../../db/providers.js";
 import { formatError, resolveId } from "../helpers.js";
 

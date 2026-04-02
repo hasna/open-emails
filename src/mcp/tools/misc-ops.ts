@@ -3,13 +3,9 @@ import { z } from 'zod';
 import type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { createGroup, getGroupByName, listGroups, deleteGroup, addMember, removeMember, listMembers, getMemberCount } from '../../db/groups.js';
 import { listSandboxEmails, getSandboxEmail, clearSandboxEmails } from '../../db/sandbox.js';
-import { getAnalytics } from '../../lib/analytics.js';
-import { runDiagnostics } from '../../lib/doctor.js';
-import { exportEmailsCsv, exportEmailsJson, exportEventsCsv, exportEventsJson } from '../../lib/export.js';
-import { verifyEmailAddress } from '../../lib/email-verify.js';
-import { parseCsv, batchSend } from '../../lib/batch.js';
-import { syncAll, syncProvider } from '../../lib/sync.js';
-import { formatError, resolveId } from '../helpers.js';
+import { getDatabase, resolvePartialId } from '../../db/database.js';
+import { sendWithFailover } from '../../lib/send.js';
+import { formatError, resolveId, ProviderNotFoundError } from '../helpers.js';
 
 export function registerMiscOpsTools(server: McpServer): void {
   // ─── GROUPS ─────────────────────────────────────────────────────────────────
@@ -195,7 +191,7 @@ export function registerMiscOpsTools(server: McpServer): void {
   async ({ provider_id, period }) => {
     try {
       const resolvedId = provider_id ? resolveId("providers", provider_id) : undefined;
-      const { getAnalytics } = await import("../lib/analytics.js");
+      const { getAnalytics } = await import("../../lib/analytics.js");
       const data = getAnalytics(resolvedId, period ?? "30d");
       return { content: [{ type: "text", text: JSON.stringify(data, null, 2) }] };
     } catch (e) {
@@ -212,7 +208,7 @@ export function registerMiscOpsTools(server: McpServer): void {
   {},
   async () => {
     try {
-      const { runDiagnostics } = await import("../lib/doctor.js");
+      const { runDiagnostics } = await import("../../lib/doctor.js");
       const checks = await runDiagnostics();
       return { content: [{ type: "text", text: JSON.stringify(checks, null, 2) }] };
     } catch (e) {
@@ -235,7 +231,7 @@ export function registerMiscOpsTools(server: McpServer): void {
     try {
       const resolvedId = provider_id ? resolveId("providers", provider_id) : undefined;
       const filters = { provider_id: resolvedId, since };
-      const { exportEmailsCsv, exportEmailsJson } = await import("../lib/export.js");
+      const { exportEmailsCsv, exportEmailsJson } = await import("../../lib/export.js");
       const output = (format ?? "json") === "csv" ? exportEmailsCsv(filters) : exportEmailsJson(filters);
       return { content: [{ type: "text", text: output }] };
     } catch (e) {
@@ -256,7 +252,7 @@ export function registerMiscOpsTools(server: McpServer): void {
     try {
       const resolvedId = provider_id ? resolveId("providers", provider_id) : undefined;
       const filters = { provider_id: resolvedId, since };
-      const { exportEventsCsv, exportEventsJson } = await import("../lib/export.js");
+      const { exportEventsCsv, exportEventsJson } = await import("../../lib/export.js");
       const output = (format ?? "json") === "csv" ? exportEventsCsv(filters) : exportEventsJson(filters);
       return { content: [{ type: "text", text: output }] };
     } catch (e) {
@@ -277,7 +273,7 @@ export function registerMiscOpsTools(server: McpServer): void {
   },
   async ({ email, smtp_probe, timeout_ms }) => {
     try {
-      const { verifyEmailAddress, formatVerifyResult } = await import("../lib/email-verify.js");
+      const { verifyEmailAddress, formatVerifyResult } = await import("../../lib/email-verify.js");
       const result = await verifyEmailAddress(email, { smtpProbe: !!smtp_probe, timeoutMs: timeout_ms ?? 5000 });
       return { content: [{ type: "text", text: JSON.stringify(result, null, 2) + "\n\n" + formatVerifyResult(result) }] };
     } catch (e) {
@@ -300,17 +296,17 @@ export function registerMiscOpsTools(server: McpServer): void {
   },
   async ({ recipients, template_name, from_address, provider_id, force }) => {
     try {
-      const { getTemplate, renderTemplate } = await import("../db/templates.js");
+      const { getTemplate, renderTemplate } = await import("../../db/templates.js");
       const template = getTemplate(template_name);
       if (!template) throw new Error(`Template not found: ${template_name}`);
-      const { getActiveProvider, getProvider } = await import("../db/providers.js");
+      const { getActiveProvider, getProvider } = await import("../../db/providers.js");
       const db = getDatabase();
       const resolvedProviderId = provider_id ? resolvePartialId(db, "providers", provider_id) ?? provider_id
         : getActiveProvider(db).id;
       const provider = getProvider(resolvedProviderId, db);
       if (!provider) throw new ProviderNotFoundError(resolvedProviderId);
-      const { isContactSuppressed, incrementSendCount } = await import("../db/contacts.js");
-      const { createEmail } = await import("../db/emails.js");
+      const { isContactSuppressed, incrementSendCount } = await import("../../db/contacts.js");
+      const { createEmail } = await import("../../db/emails.js");
       let sent = 0, skipped = 0, failed = 0;
       const errors: string[] = [];
       for (const r of recipients) {

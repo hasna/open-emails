@@ -4,11 +4,11 @@ import { createDomain, listDomains, deleteDomain, getDomain, updateDnsStatus } f
 import { createAddress, listAddresses, deleteAddress } from '../../db/addresses.js';
 import { listEmails, getEmail, searchEmails } from '../../db/emails.js';
 import { listSandboxEmails, getSandboxEmail, clearSandboxEmails } from '../../db/sandbox.js';
+import { getDatabase, resolvePartialId } from '../../db/database.js';
 import { listEvents } from '../../db/events.js';
 import { getAdapter } from '../../providers/index.js';
 import { getLocalStats } from '../../lib/stats.js';
-import { syncAll, syncProvider } from '../../lib/sync.js';
-import { json, notFound, badRequest, internalError, resolveId, parseBody, sanitizeProvider } from './helpers.js';
+import { json, notFound, badRequest, internalError, resolveId, parseBody, sanitizeProvider, checkRateLimit, tooManyRequests } from './helpers.js';
 
 export async function handle(req: Request, url: URL, path: string, method: string): Promise<Response | null> {
 // GET /api/providers
@@ -81,10 +81,10 @@ if (providerAuthMatch && method === "POST") {
       return badRequest("Provider is missing oauth_client_id or oauth_client_secret");
     }
 
-    const { startGmailOAuthFlow } = await import("../lib/gmail-oauth.js");
+    const { startGmailOAuthFlow } = await import("../../lib/gmail-oauth.js");
     const tokens = await startGmailOAuthFlow(provider.oauth_client_id, provider.oauth_client_secret);
 
-    const { updateProvider } = await import("../db/providers.js");
+    const { updateProvider } = await import("../../db/providers.js");
     const updated = updateProvider(id, {
       oauth_refresh_token: tokens.refresh_token,
       oauth_access_token: tokens.access_token,

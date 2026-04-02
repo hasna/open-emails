@@ -6,8 +6,6 @@ import { listScheduledEmails, cancelScheduledEmail } from '../../db/scheduled.js
 import { getEmailContent } from '../../db/email-content.js';
 import { getAnalytics } from '../../lib/analytics.js';
 import { exportEmailsCsv, exportEmailsJson, exportEventsCsv, exportEventsJson } from '../../lib/export.js';
-import { runDiagnostics } from '../../lib/doctor.js';
-import { syncAll, syncProvider } from '../../lib/sync.js';
 import { json, notFound, badRequest, internalError, resolveId, parseBody } from './helpers.js';
 
 export async function handle(req: Request, url: URL, path: string, method: string): Promise<Response | null> {

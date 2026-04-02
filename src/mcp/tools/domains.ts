@@ -3,8 +3,10 @@ import { z } from 'zod';
 import type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { createDomain, listDomains, deleteDomain, getDomain, updateDnsStatus } from '../../db/domains.js';
 import { createAddress, listAddresses, deleteAddress, getAddress } from '../../db/addresses.js';
+import { getProvider } from '../../db/providers.js';
+import { getDatabase } from '../../db/database.js';
 import { getAdapter } from '../../providers/index.js';
-import { formatError, resolveId, DomainNotFoundError, AddressNotFoundError } from '../helpers.js';
+import { formatError, resolveId, DomainNotFoundError, AddressNotFoundError, ProviderNotFoundError } from '../helpers.js';
 
 export function registerDomainTools(server: McpServer): void {
   // ─── DOMAINS ──────────────────────────────────────────────────────────────────
@@ -72,14 +74,14 @@ export function registerDomainTools(server: McpServer): void {
 
       if (!provider) {
         // Return generic records
-        const { generateSpfRecord, generateDmarcRecord, formatDnsTable } = await import("../lib/dns.js");
+        const { generateSpfRecord, generateDmarcRecord, formatDnsTable } = await import("../../lib/dns.js");
         const records = [generateSpfRecord(domain), generateDmarcRecord(domain)];
         return { content: [{ type: "text", text: formatDnsTable(records) }] };
       }
 
       const adapter = getAdapter(provider);
       const records = await adapter.getDnsRecords(domain);
-      const { formatDnsTable } = await import("../lib/dns.js");
+      const { formatDnsTable } = await import("../../lib/dns.js");
       return { content: [{ type: "text", text: formatDnsTable(records) }] };
     } catch (e) {
       return { content: [{ type: "text", text: `Error: ${formatError(e)}` }], isError: true };
