@@ -127,6 +127,22 @@ describe("listSandboxEmails", () => {
     const limited = listSandboxEmails(undefined, 3, db);
     expect(limited.length).toBe(3);
   });
+
+  it("respects offset", () => {
+    const p = makeProvider();
+    const db = getDatabase();
+    for (let i = 0; i < 5; i++) {
+      storeSandboxEmail({ provider_id: p.id, from_address: "a@a.com", to_addresses: ["b@b.com"], cc_addresses: [], bcc_addresses: [], reply_to: null, subject: `Offset ${i}`, html: null, text_body: "t", attachments: [], headers: {} }, db);
+    }
+
+    const page1 = listSandboxEmails(undefined, 2, 0, db).map((e) => e.id);
+    const page2 = listSandboxEmails(undefined, 2, 2, db).map((e) => e.id);
+
+    expect(page1.length).toBe(2);
+    expect(page2.length).toBe(2);
+    expect(page2).not.toEqual(page1);
+    expect(page2.some((id) => page1.includes(id))).toBe(false);
+  });
 });
 
 describe("getSandboxEmail", () => {

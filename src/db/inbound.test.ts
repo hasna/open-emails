@@ -106,6 +106,20 @@ describe("listInboundEmails", () => {
     expect(list.length).toBe(3);
   });
 
+  it("respects offset option", () => {
+    const db = makeDb();
+    for (let i = 0; i < 5; i++) {
+      storeInboundEmail({ ...sampleInput, subject: `Offset Email ${i}` }, db);
+    }
+    const page1 = listInboundEmails({ limit: 2, offset: 0 }, db).map((e) => e.id);
+    const page2 = listInboundEmails({ limit: 2, offset: 2 }, db).map((e) => e.id);
+
+    expect(page1.length).toBe(2);
+    expect(page2.length).toBe(2);
+    expect(page2).not.toEqual(page1);
+    expect(page2.some((id) => page1.includes(id))).toBe(false);
+  });
+
   it("returns empty array when none exist", () => {
     const db = makeDb();
     expect(listInboundEmails({}, db)).toEqual([]);

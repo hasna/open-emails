@@ -17,10 +17,11 @@ export function registerInboxTools(server: McpServer): void {
     provider_id: z.string().optional().describe("Filter by provider ID"),
     since: z.string().optional().describe("ISO 8601 date — only return emails received after this time"),
     limit: z.number().optional().describe("Max results (default 50)"),
+    offset: z.number().optional().describe("Pagination offset (default 0)"),
   },
-  async ({ provider_id, since, limit }) => {
+  async ({ provider_id, since, limit, offset }) => {
     try {
-      const emails = listInboundEmails({ provider_id, since, limit });
+      const emails = listInboundEmails({ provider_id, since, limit, offset });
       return { content: [{ type: "text", text: JSON.stringify(emails, null, 2) }] };
     } catch (e) {
       return { content: [{ type: "text", text: `Error: ${formatError(e)}` }], isError: true };
