@@ -94,17 +94,26 @@ export function storeSandboxEmail(input: StoreSandboxEmailInput, db?: Database):
   return rowToEmail(row);
 }
 
-export function listSandboxEmails(providerId?: string, limit = 50, db?: Database): SandboxEmail[] {
-  const d = db || getDatabase();
+export function listSandboxEmails(
+  providerId?: string,
+  limit = 50,
+  dbOrOffset?: Database | number,
+  maybeDb?: Database,
+): SandboxEmail[] {
+  const offset = typeof dbOrOffset === "number" ? dbOrOffset : 0;
+  const d = typeof dbOrOffset === "number"
+    ? (maybeDb || getDatabase())
+    : (dbOrOffset || getDatabase());
+
   let rows: SandboxEmailRow[];
   if (providerId) {
     rows = d.query(
-      "SELECT * FROM sandbox_emails WHERE provider_id = ? ORDER BY created_at DESC LIMIT ?",
-    ).all(providerId, limit) as SandboxEmailRow[];
+      "SELECT * FROM sandbox_emails WHERE provider_id = ? ORDER BY created_at DESC LIMIT ? OFFSET ?",
+    ).all(providerId, limit, offset) as SandboxEmailRow[];
   } else {
     rows = d.query(
-      "SELECT * FROM sandbox_emails ORDER BY created_at DESC LIMIT ?",
-    ).all(limit) as SandboxEmailRow[];
+      "SELECT * FROM sandbox_emails ORDER BY created_at DESC LIMIT ? OFFSET ?",
+    ).all(limit, offset) as SandboxEmailRow[];
   }
   return rows.map(rowToEmail);
 }

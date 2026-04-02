@@ -7,7 +7,7 @@ import { createAddress } from "../../db/addresses.js";
 import { getAdapter } from "../../providers/index.js";
 import { checkAllProviders, formatProviderHealth } from "../../lib/health.js";
 import { log } from "../../lib/logger.js";
-import { handleError, resolveId } from "../utils.js";
+import { confirmDestructiveAction, handleError, resolveId } from "../utils.js";
 
 export function registerProviderCommands(program: Command, output: (data: unknown, formatted: string) => void): void {
   const providerCmd = program.command("provider").description("Manage email providers");
@@ -129,13 +129,15 @@ export function registerProviderCommands(program: Command, output: (data: unknow
   providerCmd
     .command("remove <id>")
     .description("Remove a provider")
-    .action((id: string) => {
+    .option("--yes", "Skip confirmation prompt")
+    .action(async (id: string, opts: { yes?: boolean }) => {
       try {
         const resolvedId = resolveId("providers", id);
         const provider = getProvider(resolvedId);
         if (!provider) handleError(new Error(`Provider not found: ${id}`));
+        await confirmDestructiveAction(`Remove provider ${provider.name}?`, opts.yes);
         deleteProvider(resolvedId);
-        console.log(chalk.green(`✓ Provider removed: ${provider!.name}`));
+        console.log(chalk.green(`✓ Provider removed: ${provider.name}`));
       } catch (e) {
         handleError(e);
       }

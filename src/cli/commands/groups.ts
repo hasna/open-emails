@@ -1,7 +1,7 @@
 import type { Command } from "commander";
 import chalk from "chalk";
 import { createGroup, getGroupByName, listGroups, deleteGroup, addMember, removeMember, listMembers, getMemberCount } from "../../db/groups.js";
-import { handleError } from "../utils.js";
+import { confirmDestructiveAction, handleError } from "../utils.js";
 
 export function registerGroupCommands(program: Command, _output: (data: unknown, formatted: string) => void): void {
   const groupCmd = program.command("group").description("Manage recipient groups");
@@ -103,11 +103,13 @@ Group: ${group!.name}`));
   groupCmd
     .command("delete <name>")
     .description("Delete a group")
-    .action((name: string) => {
+    .option("--yes", "Skip confirmation prompt")
+    .action(async (name: string, opts: { yes?: boolean }) => {
       try {
         const group = getGroupByName(name);
         if (!group) handleError(new Error(`Group not found: ${name}`));
-        deleteGroup(group!.id);
+        await confirmDestructiveAction(`Delete group ${name}?`, opts.yes);
+        deleteGroup(group.id);
         console.log(chalk.green(`✓ Group deleted: ${name}`));
       } catch (e) {
         handleError(e);

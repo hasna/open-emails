@@ -178,11 +178,12 @@ export function getInboundEmail(id: string, db?: Database): InboundEmail | null 
 }
 
 export function listInboundEmails(
-  opts?: { provider_id?: string; since?: string; limit?: number },
+  opts?: { provider_id?: string; since?: string; limit?: number; offset?: number },
   db?: Database,
 ): InboundEmail[] {
   const d = db || getDatabase();
   const limit = opts?.limit ?? 50;
+  const offset = opts?.offset ?? 0;
   const conditions: string[] = [];
   const params: (string | number)[] = [];
 
@@ -195,11 +196,13 @@ export function listInboundEmails(
     params.push(opts.since);
   }
 
-  const where = conditions.length > 0 ? `WHERE ${conditions.join(" AND ")}` : "";
+  const where = conditions.length > 0 ? 
+    `WHERE ${conditions.join(" AND ")}` : "";
   params.push(limit);
+  params.push(offset);
 
   const rows = d
-    .query(`SELECT * FROM inbound_emails ${where} ORDER BY received_at DESC LIMIT ?`)
+    .query(`SELECT * FROM inbound_emails ${where} ORDER BY received_at DESC LIMIT ? OFFSET ?`)
     .all(...params) as InboundEmailRow[];
   return rows.map(rowToEmail);
 }

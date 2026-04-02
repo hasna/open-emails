@@ -3,7 +3,7 @@ import chalk from "chalk";
 import { execSync } from "node:child_process";
 import { listSandboxEmails, getSandboxEmail, clearSandboxEmails, getSandboxCount } from "../../db/sandbox.js";
 import { getDatabase, resolvePartialId } from "../../db/database.js";
-import { handleError, resolveId } from "../utils.js";
+import { confirmDestructiveAction, handleError, resolveId } from "../utils.js";
 
 export function registerSandboxCommands(program: Command, output: (data: unknown, formatted: string) => void): void {
   const sandboxCmd = program.command("sandbox").description("Inspect emails captured by sandbox providers");
@@ -13,11 +13,13 @@ export function registerSandboxCommands(program: Command, output: (data: unknown
     .description("List captured sandbox emails")
     .option("--provider <id>", "Filter by provider ID")
     .option("--limit <n>", "Max results", "20")
-    .action((opts: { provider?: string; limit?: string }) => {
+    .option("--offset <n>", "Skip first N emails", "0")
+    .action((opts: { provider?: string; limit?: string; offset?: string }) => {
       try {
         const providerId = opts.provider ? resolveId("providers", opts.provider) : undefined;
         const limit = parseInt(opts.limit ?? "20", 10);
-        const emails = listSandboxEmails(providerId, limit);
+        const offset = parseInt(opts.offset ?? "0", 10);
+        const emails = listSandboxEmails(providerId, limit, offset);
         if (emails.length === 0) {
           output([], chalk.dim("No sandbox emails captured yet."));
           return;
@@ -110,9 +112,12 @@ export function registerSandboxCommands(program: Command, output: (data: unknown
     .command("clear")
     .description("Delete all captured sandbox emails")
     .option("--provider <id>", "Only clear emails for a specific provider")
-    .action((opts: { provider?: string }) => {
+    .option("--yes", "Skip confirmation prompt")
+    .action(async (opts: { provider?: string; yes?: boolean }) => {
       try {
         const providerId = opts.provider ? resolveId("providers", opts.provider) : undefined;
+        const target = providerId ? `for provider ${providerId}` : "for all providers";
+        await confirmDestructiveAction(`Clear sandbox emails ${target}?`, opts.yes);
         const db = getDatabase();
         const count = clearSandboxEmails(providerId, db);
         console.log(chalk.green(`✓ Cleared ${count} sandbox email(s)`));

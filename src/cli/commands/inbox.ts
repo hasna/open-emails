@@ -6,7 +6,7 @@ import { listInboundEmails, getInboundEmail, deleteInboundEmail, clearInboundEma
 import { getGmailSyncState, updateLastSynced } from "../../db/gmail-sync-state.js";
 import { listProviders } from "../../db/providers.js";
 import { getDatabase } from "../../db/database.js";
-import { handleError } from "../utils.js";
+import { confirmDestructiveAction, handleError } from "../utils.js";
 
 export function registerInboxCommands(program: Command, output: (data: unknown, formatted: string) => void): void {
   const inboxCmd = program.command("inbox").description("Sync and browse inbound emails (Gmail, SMTP, S3)");
@@ -102,12 +102,14 @@ export function registerInboxCommands(program: Command, output: (data: unknown, 
     .option("--provider <id>", "Filter by provider ID")
     .option("--since <date>", "Only show emails after this date")
     .option("--limit <n>", "Max results", "20")
+    .option("--offset <n>", "Skip first N emails", "0")
     .option("--search <query>", "Filter by subject/from (local, not Gmail API)")
-    .action((opts: { provider?: string; since?: string; limit?: string; search?: string }) => {
+    .action((opts: { provider?: string; since?: string; limit?: string; offset?: string; search?: string }) => {
       try {
         const db = getDatabase();
         const limit = parseInt(opts.limit ?? "20", 10);
-        let emails = listInboundEmails({ provider_id: opts.provider, since: opts.since, limit }, db);
+        const offset = parseInt(opts.offset ?? "0", 10);
+        let emails = listInboundEmails({ provider_id: opts.provider, since: opts.since, limit, offset }, db);
 
         if (opts.search) {
           const q = opts.search.toLowerCase();
@@ -347,8 +349,10 @@ export function registerInboxCommands(program: Command, output: (data: unknown, 
   inboxCmd
     .command("delete <id>")
     .description("Delete a synced email from local DB (does not affect Gmail)")
-    .action((id: string) => {
+    .option("--yes", "Skip confirmation prompt")
+    .action(async (id: string, opts: { yes?: boolean }) => {
       try {
+        await confirmDestructiveAction(`Delete local inbox email ${id}?`, opts.yes);
         const db = getDatabase();
         const deleted = deleteInboundEmail(id, db);
         if (deleted) {
@@ -367,8 +371,11 @@ export function registerInboxCommands(program: Command, output: (data: unknown, 
     .command("clear")
     .description("Clear all synced emails from local DB (does not affect Gmail)")
     .option("--provider <id>", "Only clear emails for this provider")
-    .action((opts: { provider?: string }) => {
+    .option("--yes", "Skip confirmation prompt")
+    .action(async (opts: { provider?: string; yes?: boolean }) => {
       try {
+        const target = opts.provider ? `for provider ${opts.provider}` : "for all providers";
+        await confirmDestructiveAction(`Clear local inbox emails ${target}?`, opts.yes);
         const db = getDatabase();
         const deleted = clearInboundEmails(opts.provider, db);
         console.log(chalk.green(`✓ Cleared ${deleted} email(s)`));

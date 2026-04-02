@@ -1,5 +1,8 @@
 import chalk from "chalk";
+import { createInterface } from "node:readline/promises";
 import { getDatabase, resolvePartialId } from "../db/database.js";
+
+const ID_ERROR_SUGGESTION_LIMIT = 5;
 
 export function handleError(e: unknown): never {
   console.error(chalk.red(e instanceof Error ? e.message : String(e)));
@@ -10,10 +13,46 @@ export function resolveId(table: string, partialId: string): string {
   const db = getDatabase();
   const id = resolvePartialId(db, table, partialId);
   if (!id) {
-    console.error(chalk.red(`Could not resolve ID: ${partialId}`));
+    const suggestions = getIdSuggestions(table, partialId);
+    const suggestionText = suggestions.length > 0
+      ? `\nSimilar IDs in ${table}: ${suggestions.join(", ")}`
+      : "";
+    console.error(chalk.red(`Could not resolve ID '${partialId}' in table '${table}'.${suggestionText}`));
     process.exit(1);
   }
   return id;
+}
+
+function getIdSuggestions(table: string, partialId: string): string[] {
+  const db = getDatabase();
+  try {
+    const rows = db
+      .query(`SELECT id FROM ${table} WHERE id LIKE ? ORDER BY created_at DESC LIMIT ?`)
+      .all(`${partialId}%`, ID_ERROR_SUGGESTION_LIMIT) as Array<{ id?: string }>;
+    return rows
+      .map((row) => row.id)
+      .filter((id): id is string => typeof id === "string" && id.length > 0);
+  } catch {
+    return [];
+  }
+}
+
+export async function confirmDestructiveAction(message: string, yes?: boolean): Promise<void> {
+  if (yes) return;
+
+  if (!process.stdin.isTTY || !process.stdout.isTTY) {
+    throw new Error("Destructive operation blocked in non-interactive mode. Re-run with --yes to confirm.");
+  }
+
+  const rl = createInterface({ input: process.stdin, output: process.stdout });
+  try {
+    const answer = (await rl.question(`${message} Type 'yes' to continue: `)).trim().toLowerCase();
+    if (answer !== "yes") {
+      throw new Error("Operation cancelled.");
+    }
+  } finally {
+    rl.close();
+  }
 }
 
 export function parseDuration(str: string): number {

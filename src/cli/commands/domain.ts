@@ -5,7 +5,7 @@ import { getProvider } from "../../db/providers.js";
 import { getAdapter } from "../../providers/index.js";
 import { formatDnsTable } from "../../lib/dns.js";
 import { colorDnsStatus, truncate, formatDate, tableRow } from "../../lib/format.js";
-import { handleError, resolveId } from "../utils.js";
+import { confirmDestructiveAction, handleError, resolveId } from "../utils.js";
 import { createWarmingSchedule, getWarmingSchedule, listWarmingSchedules, updateWarmingStatus } from "../../db/warming.js";
 import { formatWarmingStatus, generateWarmingPlan, getTodayLimit, getTodaySentCount } from "../../lib/warming.js";
 
@@ -165,13 +165,15 @@ export function registerDomainCommands(program: Command, output: (data: unknown,
   domainCmd
     .command("remove <id>")
     .description("Remove a domain")
-    .action((id: string) => {
+    .option("--yes", "Skip confirmation prompt")
+    .action(async (id: string, opts: { yes?: boolean }) => {
       try {
         const resolvedId = resolveId("domains", id);
         const domain = getDomain(resolvedId);
         if (!domain) handleError(new Error(`Domain not found: ${id}`));
+        await confirmDestructiveAction(`Remove domain ${domain.domain}?`, opts.yes);
         deleteDomain(resolvedId);
-        console.log(chalk.green(`✓ Domain removed: ${domain!.domain}`));
+        console.log(chalk.green(`✓ Domain removed: ${domain.domain}`));
       } catch (e) {
         handleError(e);
       }

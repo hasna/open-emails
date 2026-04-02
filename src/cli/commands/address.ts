@@ -5,7 +5,7 @@ import { getProvider } from "../../db/providers.js";
 import { getDatabase } from "../../db/database.js";
 import { getAdapter } from "../../providers/index.js";
 import { colorDnsStatus } from "../../lib/format.js";
-import { handleError, resolveId } from "../utils.js";
+import { confirmDestructiveAction, handleError, resolveId } from "../utils.js";
 
 export function registerAddressCommands(program: Command, output: (data: unknown, formatted: string) => void): void {
   const addressCmd = program.command("address").description("Manage sender email addresses");
@@ -88,13 +88,15 @@ export function registerAddressCommands(program: Command, output: (data: unknown
   addressCmd
     .command("remove <id>")
     .description("Remove a sender address")
-    .action((id: string) => {
+    .option("--yes", "Skip confirmation prompt")
+    .action(async (id: string, opts: { yes?: boolean }) => {
       try {
         const resolvedId = resolveId("addresses", id);
         const addr = getAddress(resolvedId);
         if (!addr) handleError(new Error(`Address not found: ${id}`));
+        await confirmDestructiveAction(`Remove sender address ${addr.email}?`, opts.yes);
         deleteAddress(resolvedId);
-        console.log(chalk.green(`✓ Address removed: ${addr!.email}`));
+        console.log(chalk.green(`✓ Address removed: ${addr.email}`));
       } catch (e) {
         handleError(e);
       }
